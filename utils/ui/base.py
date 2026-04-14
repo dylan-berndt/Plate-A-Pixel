@@ -1,6 +1,11 @@
 import pygame
 
 
+class Inputs:
+    def __init__(self):
+        pass
+
+
 class Padding:
     def __init__(self, left=0, right=0, bottom=0, top=0):
         self.left = left
@@ -40,17 +45,6 @@ class Grid(Element):
         pass
 
     def add(self, element: Element):
-        pass
-
-    def input(self, inputs):
-        pass
-
-
-class Button(Element):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def render(self, state):
         pass
 
     def input(self, inputs):
