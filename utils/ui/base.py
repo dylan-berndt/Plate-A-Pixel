@@ -31,7 +31,7 @@ class Element:
         pass
 
     def render(self, state):
-        raise NotImplementedError("Base Element is not renderable")
+        raise NotImplementedError(f"This Element has not implemented rendering: {type(self)}")
     
     def input(self, inputs):
         pass
