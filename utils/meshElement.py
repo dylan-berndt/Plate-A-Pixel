@@ -12,8 +12,8 @@ class MeshElement(Element):
     def travel(self, d):
         pass
 
-    def render(self, state):
+    def render(self, state: State):
         pass
 
-    def input(self, inputs):
+    def input(self, inputs, state: State):
         pass

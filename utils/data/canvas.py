@@ -9,11 +9,11 @@ class Canvas:
         # TODO: Evaluate using map instead of raw image
         self.image, self.scale = Canvas.detectScale(image)
 
-        self.colors = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
+        self.palette = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
 
         layerShape = self.image.shape[:-1]
         self.map = np.zeros(layerShape, dtype=np.int32)
-        for c, color in enumerate(self.colors):
+        for c, color in enumerate(self.palette):
             mask = np.all(self.image == color, axis=-1)
             self.map[mask] = c
 

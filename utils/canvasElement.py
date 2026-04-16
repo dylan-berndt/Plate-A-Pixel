@@ -7,7 +7,7 @@ class CanvasElement(Element):
         super().__init__(**kwargs)
 
         self.zoom = 1
-        self.position = (0, 0)
+        self.position = Vector2(0, 0)
 
-    def render(self, state):
+    def render(self, state: State):
         pass
