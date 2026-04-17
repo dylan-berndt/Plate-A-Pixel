@@ -4,6 +4,7 @@ from base import *
 class Text(Element):
     def __init__(self, text, **kwargs):
         super().__init__(**kwargs)
+        self.text = text
 
     def render(self, state: State):
         pass
@@ -17,7 +18,7 @@ class TextInput(Element):
     def render(self, state: State):
         pass
 
-    def input(self, inputs: Inputs, state: State):
+    def input(self, inputs: Inputs, state: State) -> bool:
         pass
 
 
@@ -39,7 +40,7 @@ class Button(Element):
     def render(self, state: State):
         pass
 
-    def input(self, inputs, state: State):
+    def input(self, inputs, state: State) -> bool:
         pass
 
 
@@ -51,7 +52,7 @@ class Dropdown(Element):
     def render(self, state):
         pass
 
-    def input(self, inputs, state: State):
+    def input(self, inputs, state: State) -> bool:
         pass
 
 
@@ -62,5 +63,5 @@ class Popup(Element):
     def render(self, state: State):
         pass
 
-    def input(self, inputs, state: State):
+    def input(self, inputs, state: State) -> bool:
         pass

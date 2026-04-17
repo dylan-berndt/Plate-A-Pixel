@@ -127,6 +127,16 @@ class State:
         s.rect = rect
         return s
     
+    def shrinkRect(self, box: Padding | Margin):
+        s = copy(self)
+        s.rect = pygame.Rect(
+            s.rect.x + box.left,
+            s.rect.y + box.top,
+            s.rect.width  - box.left - box.right,
+            s.rect.height - box.top  - box.bottom,
+        )
+        return s
+    
     def updateTheme(self, **kwargs):
         t = self.theme.override(**kwargs)
         s = copy(self)
@@ -134,32 +144,98 @@ class State:
         return s
 
 
-
 class Element:
     def __init__(self, padding=Padding(), margin=Margin(), **kwargs):
         self.padding = padding
         self.margin = margin
         self.themeOverrides = kwargs
-
-    def calculateRect(self, state: State):
-        pass
+        self.children: list[Element] = []
 
     def add(self, element):
+        self.children.append(element)
+        return self
+
+    # Handles drawing of the Element itself within the rect defined by state
+    def render(self, state: State):
         pass
 
-    def render(self, state: State):
-        raise NotImplementedError(f"{type(self)} has not implemented render()")
+    # Handles rect transformations and queues rendering of children
+    def _render(self, state: State):
+        state = state.updateTheme(self.themeOverrides).shrinkRect(self.padding)
+
+        self.render(state)
+
+        for child in self.children:
+            child._render(state.shrinkRect(self.margin))
     
-    def input(self, inputs, state: State):
+    # Handles input for this Element, returns True when this element blocks input
+    def input(self, inputs, state: State) -> bool:
         pass
+
+    def _input(self, inputs: Inputs, state: State) -> bool:
+        state = state.updateTheme(self.themeOverrides).shrinkRect(self.padding)
+
+        self.input(inputs, state)
+
+        for child in self.children:
+            child._input(inputs, state.shrinkRect(self.margin))
+
+
+class GridElement(Element):
+    def __init__(self, child, position, size, **kwargs):
+        super().__init__(**kwargs)
+
+        self.position = position
+        self.size = size
+        self.children = child
 
 
 class Grid(Element):
-    def __init__(self, **kwargs):
+    def __init__(self, gridPadding: Padding, **kwargs):
         super().__init__(**kwargs)
+
+        self.gridPadding = gridPadding
+        self.rows = 0
+        self.columns = 0
+
+    def calculateLayout(self):
+        for child in self.children:
+            self.rows = max(self.rows, child.position[1] + child.size[1])
+            self.columns = max(self.rows, child.position[0] + child.size[0])
+
+    def gridRect(self, state: State, element: GridElement):
+        cellWidth = state.rect.width / self.columns
+        elementWidth = int(cellWidth * element.size[0])
+
+        cellHeight = state.rect.height / self.rows
+        elementHeight = int(cellHeight * element.size[1])
+        rect = pygame.Rect(
+            state.rect.x + int(cellWidth * element.position[0]),
+            state.rect.y + int(cellHeight * element.position[1]),
+            elementWidth,
+            elementHeight,
+        )
+        return state.withRect(rect)
+
+    def add(self, element: GridElement):
+        element.padding = self.gridPadding
+        self.children.append(element)
+        self.calculateLayout()
+        return self
+    
+    def add(self, element: Element, position, size):
+        self.children.append(GridElement(element, position, size, padding=self.gridPadding))
+        self.calculateLayout()
+        return self
 
     def render(self, state: State):
         pass
 
-    def input(self, inputs, state: State):
+    def _render(self, state: State):
+        state = state.updateTheme(self.themeOverrides).shrinkRect(self.padding)
+
+        for child in self.children:
+            child._render(self.gridRect(state.shrinkRect(self.margin), child))
+
+    def input(self, inputs, state: State) -> bool:
         pass
