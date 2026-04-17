@@ -23,9 +23,6 @@ class Theme:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    def __getattribute__(self, name):
-        pass
-
     @property
     def font(self):
         pass
@@ -116,8 +113,8 @@ class Inputs:
     
 
 class State:
-    def __init__(self, screen: pygame.Surface, theme: Theme, rect: pygame.Rect, dt: float = 0.0):
-        self.screen = screen
+    def __init__(self, surface: pygame.Surface, theme: Theme, rect: pygame.Rect, dt: float = 0.0):
+        self.surface = surface
         self.theme = theme
         self.rect = rect
         self.dt = dt
@@ -161,7 +158,7 @@ class Element:
 
     # Handles rect transformations and queues rendering of children
     def _render(self, state: State):
-        state = state.updateTheme(self.themeOverrides).shrinkRect(self.padding)
+        state = state.updateTheme(**self.themeOverrides).shrinkRect(self.padding)
 
         self.render(state)
 
@@ -187,7 +184,7 @@ class GridElement(Element):
 
         self.position = position
         self.size = size
-        self.children = child
+        self.children = [child]
 
 
 class Grid(Element):
@@ -232,7 +229,7 @@ class Grid(Element):
         pass
 
     def _render(self, state: State):
-        state = state.updateTheme(self.themeOverrides).shrinkRect(self.padding)
+        state = state.updateTheme(**self.themeOverrides).shrinkRect(self.padding)
 
         for child in self.children:
             child._render(self.gridRect(state.shrinkRect(self.margin), child))

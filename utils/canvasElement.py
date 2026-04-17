@@ -1,5 +1,5 @@
-from ui import *
-from data import *
+from .ui import *
+from .data import *
 
 
 class CanvasElement(Element):
