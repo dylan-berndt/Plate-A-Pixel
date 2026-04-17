@@ -37,5 +37,5 @@ class Window:
     def render(self):
         self.screen.fill(self.theme.background)
         self.root._render(self._state)
-        self.screen.blit(self._state.screen, (0, 0))
+        self.screen.blit(self._state.surface, (0, 0))
         pygame.display.flip()

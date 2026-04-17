@@ -170,7 +170,7 @@ class Element:
         pass
 
     def _input(self, inputs: Inputs, state: State) -> bool:
-        state = state.updateTheme(self.themeOverrides).shrinkRect(self.padding)
+        state = state.updateTheme(**self.themeOverrides).shrinkRect(self.padding)
 
         self.input(inputs, state)
 
@@ -236,3 +236,11 @@ class Grid(Element):
 
     def input(self, inputs, state: State) -> bool:
         pass
+
+    def _input(self, inputs: Inputs, state: State) -> bool:
+        state = state.updateTheme(**self.themeOverrides).shrinkRect(self.padding)
+
+        self.input(inputs, state)
+
+        for child in self.children:
+            child._input(inputs, self.gridRect(state.shrinkRect(self.margin), child))

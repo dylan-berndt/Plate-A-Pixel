@@ -2,7 +2,7 @@ from utils import *
 
 root = Grid(Padding(12, 12, 12, 12))
 
-button = Button(lambda x: print("PRESSED")).add(Text("Hello"))
+button = Button(lambda: print("PRESSED")).add(Text("Hello"))
 
 root.add(button, (1, 1), (1, 1))
 

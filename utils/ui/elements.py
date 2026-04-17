@@ -40,8 +40,12 @@ class Button(Element):
     def render(self, state: State):
         pass
 
-    def input(self, inputs, state: State) -> bool:
-        pass
+    def input(self, inputs: Inputs, state: State) -> bool:
+        inside = state.rect.collidepoint(*inputs.mousePos)
+        clicked = inside and inputs.click
+        if clicked:
+            self.onClick()
+        return clicked
 
 
 @interactive
