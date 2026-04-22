@@ -9,11 +9,17 @@ class MeshElement(Element):
         self.position = Vector3(0, 0, 1)
         self.units = "mm"
 
-    def travel(self, d):
+        self.mesh: Mesh = None
+
+    def _calculateView(self):
+        pass
+
+    def travel(self, position, delta):
         pass
 
     def render(self, state: State):
-        pass
+        if self.mesh is None:
+            return
 
     def input(self, inputs, state: State):
         pass
