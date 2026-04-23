@@ -5,9 +5,18 @@ class Text(Element):
     def __init__(self, text, **kwargs):
         super().__init__(**kwargs)
         self.text = text
+        self.font = None
 
     def render(self, state: State):
-        pass
+        theme = state.theme
+        if self.font is None:
+            self.font = pygame.font.SysFont(theme.fontFamily, theme.fontSize)
+
+        surf = self.font.render(self.text, True, theme.text)
+        r = state.rect
+        x = r.x + (r.width  - surf.get_width())  // 2
+        y = r.y + (r.height - surf.get_height()) // 2
+        state.surface.blit(surf, (x, y))
 
 
 @interactive
@@ -19,6 +28,25 @@ class TextInput(Element):
         pass
 
     def input(self, inputs: Inputs, state: State) -> bool:
+        pass
+
+
+@interactive
+class Slider(Element):
+    def __init__(self, values: tuple, handleValue: function, defaultValue = None, **kwargs):
+        super().__init__(**kwargs)
+        self.sliding = False
+        self.value = values[0] if defaultValue is None else defaultValue
+        self.handleValue = handleValue
+        self.values = values
+
+    def input(self, inputs: Inputs, state: State):
+        if self.istate.pressed:
+            self.sliding = True
+
+        # TODO: State management in Inputs
+    
+    def render(self, state: State):
         pass
 
 
@@ -38,7 +66,19 @@ class Button(Element):
         self.onClick = onClick
 
     def render(self, state: State):
-        pass
+        istate = self.istate
+        r = state.rect
+
+        if istate.disabled:
+            bg = state.theme.disabled
+        elif istate.pressed:
+            bg = state.theme.pressed
+        elif istate.hovered:
+            bg = state.theme.hover
+        else:
+            bg = state.theme.surface
+        
+        pygame.draw.rect(state.surface, bg, r)
 
     def input(self, inputs: Inputs, state: State) -> bool:
         inside = state.rect.collidepoint(*inputs.mousePos)

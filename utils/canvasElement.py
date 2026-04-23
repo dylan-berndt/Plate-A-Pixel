@@ -29,7 +29,19 @@ class CanvasArea(Element):
                                     {"True": True, "False": False})}, 
                            {"mode": "add", "diagonal": True})
         
-        self.tools = [self.wand]
+        self.brushSelect = Tool("brushSelect",
+                                {"size":
+                                 Options("Brush Size", "slider", 
+                                         {"Minimum": 1, "Maximum": 35})},
+                                {"size": 4})
+        
+        self.brush = Tool("brush",
+                          {"size":
+                           Options("Brush Size", "slider",
+                                   {"Minimum": 1, "Maximum": 35})},
+                          {"size": 4})
+        
+        self.tools = [self.wand, self.brushSelect, self.brush]
 
         self.tool = self.wand
 
@@ -50,6 +62,9 @@ class CanvasArtist(Element):
         # Zoom represents percentage of canvas area taken up by longest side of image
         self.zoom = 1
         self.position = Vector2(0, 0)
+
+    def input(self, inputs: Inputs, state: State):
+        pass
 
     def _mouseToCanvas(self, position: Vector2, state: State):
         pass
