@@ -26,11 +26,17 @@ class Mesh:
     
     # Used to rotate a mesh from above. Should be used before translation (typically on notches)
     # Always in 90 degree increments, so clockwise 1 = 90 degrees, clockwise 2 = 180 degrees
-    def _rotateMesh(self, mesh, clockwise):
+    def _rotateMeshXY(self, mesh: list[Vector3], clockwise):
         for i in range(clockwise):
             for t in range(len(mesh)):
-                mesh[t] = [mesh[t][1], -mesh[t][0], mesh[t][2]]
+                mesh[t] = Vector3(mesh[t].y, -mesh[t].x, mesh[t].z)
 
+        return mesh
+    
+    def _translateMesh(self, mesh: list[Vector3], position: Vector3):
+        for t in range(len(mesh)):
+            mesh[t] = mesh[t] + position
+        
         return mesh
     
     # Returns mesh data for a notch, both positive and negative
@@ -38,17 +44,37 @@ class Mesh:
     # and allow the pieces of the model to come together.
     # Negative notches are the inlets where positive notches attach to lower pixels
     # Notches only ever go sideways out/in from a wall
-    def _notch(self, position: Vector3, direction: Vector2, positive=True):
+    def _notch(self, position: Vector3, angle: int = 0, positive=True):
         pass
+
+    # Inlet place on a pixel cap for a higher pixel to attach to
+    def _inlet(self, position: Vector3, angle: int = 0):
+        notchMesh = self._notch(Vector3(0, 0, 0), positive=False)
+
+        # TODO: Generate 4 rectangles around notch, one wall of pixel cap
+        wallMesh = []
+
+        mesh = notchMesh.extend(wallMesh)
+
+        return self._translateMesh(self._rotateMeshXY(mesh, angle), position)
 
     # Returns mesh data for a flat rectangle/square
     def _rectangle(self, position: Vector3, direction: Vector3):
         pass
     
-    # Returns mesh data (list of triangles) for a particular cap of a pixel
+    # Returns mesh data (list of Vector3 vertices) for a particular cap of a pixel
     # Sides with pixels of similar color should connect contiguously, dissimilar colors should yield a wall between the two.
     # Sides with nothing next to them should have a bulge, this allows dithered pixels to connect and form a single mesh
     def _pixelCap(self, position: Vector3, sidesClear=[True, True, True, True]):
+        # TODO: Top of cap, simple rectangle
+        # TODO: Rounded corners (top to sides, side to side)
+        # TODO: Notched sides
+        # TODO: Bulge
+        pass
+
+    def _tube(self, position: Vector3):
+        # TODO: Determine sides requiring walls
+        # TODO: Determine location of notches in walls
         pass
 
     def _calculateMesh(self):
