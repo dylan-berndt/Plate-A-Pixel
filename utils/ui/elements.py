@@ -33,7 +33,7 @@ class TextInput(Element):
 
 @interactive
 class Slider(Element):
-    def __init__(self, values: tuple, handleValue: function, defaultValue = None, **kwargs):
+    def __init__(self, values: tuple, handleValue, defaultValue = None, **kwargs):
         super().__init__(**kwargs)
         self.sliding = False
         self.value = values[0] if defaultValue is None else defaultValue
