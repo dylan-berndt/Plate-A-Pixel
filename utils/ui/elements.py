@@ -1,111 +1,73 @@
+from PySide6.QtWidgets import (
+    QLabel, QLineEdit, QSlider, QPushButton, QComboBox, QDialog, QWidget, QGridLayout
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from .base import *
 
 
-class Text(Element):
+class Text(QLabel):
     def __init__(self, text, **kwargs):
+        super().__init__(text, **kwargs)
+        self.setAlignment(Qt.AlignCenter)
+
+
+class TextInput(QLineEdit):
+    def __init__(self, placeholder="", **kwargs):
         super().__init__(**kwargs)
-        self.text = text
-        self.font = None
-
-    def render(self, state: State):
-        theme = state.theme
-        if self.font is None:
-            self.font = pygame.font.SysFont(theme.fontFamily, theme.fontSize)
-
-        surf = self.font.render(self.text, True, theme.text)
-        r = state.rect
-        x = r.x + (r.width  - surf.get_width())  // 2
-        y = r.y + (r.height - surf.get_height()) // 2
-        state.surface.blit(surf, (x, y))
+        self.setPlaceholderText(placeholder)
 
 
-@interactive
-class TextInput(Element):
-    def __init__(self, placeholder, **kwargs):
-        super().__init__(**kwargs)
+class Slider(QSlider):
+    def __init__(self, values: tuple, handleValue, defaultValue=None, **kwargs):
+        super().__init__(Qt.Horizontal, **kwargs)
+        self.setMinimum(values[0])
+        self.setMaximum(values[1])
+        self.setValue(values[0] if defaultValue is None else defaultValue)
 
-    def render(self, state: State):
-        pass
-
-    def input(self, inputs: Inputs, state: State) -> bool:
-        pass
-
-
-@interactive
-class Slider(Element):
-    def __init__(self, values: tuple, handleValue, defaultValue = None, **kwargs):
-        super().__init__(**kwargs)
-        self.sliding = False
-        self.value = values[0] if defaultValue is None else defaultValue
         self.handleValue = handleValue
-        self.values = values
-
-    def input(self, inputs: Inputs, state: State):
-        if self.istate.pressed:
-            self.sliding = True
-
-        # TODO: State management in Inputs
-    
-    def render(self, state: State):
-        pass
+        self.valueChanged.connect(self.handleValue)
 
 
-class Image(Element):
-    def __init__(self, surface: pygame.Surface, **kwargs):
+class Image(QLabel):
+    def __init__(self, pixmap: QPixmap, **kwargs):
         super().__init__(**kwargs)
-
-    def render(self, state: State):
-        pass
+        self.setPixmap(pixmap)
 
 
-@interactive
-class Button(Element):
+class Button(QPushButton):
     def __init__(self, onClick, **kwargs):
         super().__init__(**kwargs)
 
         self.onClick = onClick
+        self.clicked.connect(self.onClick)
 
-    def render(self, state: State):
-        istate = self.istate
-        r = state.rect
-
-        if istate.disabled:
-            bg = state.theme.disabled
-        elif istate.pressed:
-            bg = state.theme.pressed
-        elif istate.hovered:
-            bg = state.theme.hover
-        else:
-            bg = state.theme.surface
-        
-        pygame.draw.rect(state.surface, bg, r)
-
-    def input(self, inputs: Inputs, state: State) -> bool:
-        inside = state.rect.collidepoint(*inputs.mousePos)
-        clicked = inside and inputs.click
-        if clicked:
-            self.onClick()
-        return clicked
+    # Kept to mirror the old Button(...).add(Text(...)) call pattern from
+    # main.py; a QPushButton just takes its label as text directly.
+    def add(self, element: QLabel):
+        self.setText(element.text())
+        return self
 
 
-@interactive
-class Dropdown(Element):
-    def __init__(self, options, **kwargs):
+class Dropdown(QComboBox):
+    def __init__(self, options: dict, **kwargs):
         super().__init__(**kwargs)
-
-    def render(self, state):
-        pass
-
-    def input(self, inputs, state: State) -> bool:
-        pass
+        for label, value in options.items():
+            self.addItem(label, value)
 
 
-class Popup(Element):
+class Popup(QDialog):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def render(self, state: State):
-        pass
 
-    def input(self, inputs, state: State) -> bool:
-        pass
+class Grid(QWidget):
+    def __init__(self, margins=(0, 0, 0, 0), **kwargs):
+        super().__init__(**kwargs)
+
+        self._layout = QGridLayout(self)
+        self._layout.setContentsMargins(*margins)
+
+    def add(self, element: QWidget, position, size):
+        self._layout.addWidget(element, position[1], position[0], size[1], size[0])
+        return self

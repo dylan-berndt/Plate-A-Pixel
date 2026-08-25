@@ -1,12 +1,16 @@
+import sys
+from PySide6.QtWidgets import QApplication
 from utils import *
 
-root = Grid(Padding(12, 12, 12, 12))
+app = QApplication(sys.argv)
+
+root = Grid((12, 12, 12, 12))
 
 button = Button(lambda: print("PRESSED")).add(Text("Hello"))
 
 root.add(button, (1, 1), (1, 1))
 
-manager = Window((800, 600), root, caption="Plate A Pixel", flags=pygame.RESIZABLE)
+window = Window((800, 600), root, caption="Plate A Pixel")
+window.show()
 
-while True:
-    manager.update()
+sys.exit(app.exec())
