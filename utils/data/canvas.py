@@ -1,7 +1,6 @@
 import numpy as np
 from PIL import Image
-import tkinter as tk
-from tkinter.filedialog import askopenfilename
+from PySide6.QtWidgets import QFileDialog
 
 
 class Canvas:
@@ -61,12 +60,13 @@ class Canvas:
         return baseImage, maxScale
 
 
+    # Image import for now; the "PNG Files" filter is the one entry point
+    # a future custom project format (e.g. "*.pap") would extend alongside.
     @staticmethod
-    def loadNewCanvas():
-        root = tk.Tk()
-        root.withdraw()
-
-        filePath = askopenfilename(filetypes=[("PNG Files", "*.png")])
+    def loadNewCanvas(parent=None):
+        filePath, _ = QFileDialog.getOpenFileName(parent, "Import Image", "", "PNG Files (*.png)")
+        if not filePath:
+            return None
         return Canvas.fromFilePath(filePath)
 
     @staticmethod
@@ -152,5 +152,8 @@ class Canvas:
 
 
 if __name__ == "__main__":
+    import sys
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
     canvas = Canvas.loadNewCanvas()
-        
