@@ -74,40 +74,75 @@ def _faceQuad(faceKey, fixedValue, u0, u1, y0, y1):
     return _quad(p10, p00, p01, p11)
 
 
-def _notchBox(faceKey, boundaryValue, uMid, uHalf, y0, y1):
-    """A tab protruding from the tube's inset wall out past the shared pixel
-    boundary, so it engages the neighbor's inlet pocket on the other side."""
-    inward = TUBE_MARGIN
-    outward = NOTCH_DEPTH
-    if faceKey == '+x':
-        return _box((boundaryValue - inward, y0, uMid - uHalf), (boundaryValue + outward, y1, uMid + uHalf))
-    if faceKey == '-x':
-        return _box((boundaryValue - outward, y0, uMid - uHalf), (boundaryValue + inward, y1, uMid + uHalf))
-    if faceKey == '+z':
-        return _box((uMid - uHalf, y0, boundaryValue - inward), (uMid + uHalf, y1, boundaryValue + outward))
-    return _box((uMid - uHalf, y0, boundaryValue - outward), (uMid + uHalf, y1, boundaryValue + inward))
+NOTCH_HEIGHT_RATIO = 0.4     # notch/inlet height as a fraction of the cap's own height
 
 
-def _inletFace(faceKey, fixedValue, u0, u1, y0, y1):
-    """A cap side face with a full-height pocket recessed into its center,
-    sized to receive a taller neighbor's notch."""
+def _notchWedge(faceKey, boundaryValue, uMid, uHalf, notchTopY):
+    """A wedge tab on the tube's inset wall, in the top NOTCH_HEIGHT_RATIO
+    of the shorter neighbor's cap band: flush (no protrusion) at the
+    bottom of that band, ramping up to full protrusion past the shared
+    boundary at the top, with a flat top shelf. Pressed straight down,
+    the ramp cams the tab past the matching inlet; the flat shelf is what
+    then holds it seated - a plain box wouldn't allow that motion at all."""
+    notchBottomY = notchTopY - NOTCH_HEIGHT_RATIO
+    uA, uB = uMid - uHalf, uMid + uHalf
+    if faceKey in ('+x', '+z'):
+        flush = boundaryValue - TUBE_MARGIN
+        tip = boundaryValue + NOTCH_DEPTH
+    else:
+        flush = boundaryValue + TUBE_MARGIN
+        tip = boundaryValue - NOTCH_DEPTH
+
+    flushA_bot = _facePoint(faceKey, flush, uA, notchBottomY)
+    flushB_bot = _facePoint(faceKey, flush, uB, notchBottomY)
+    flushA_top = _facePoint(faceKey, flush, uA, notchTopY)
+    flushB_top = _facePoint(faceKey, flush, uB, notchTopY)
+    tipA_top = _facePoint(faceKey, tip, uA, notchTopY)
+    tipB_top = _facePoint(faceKey, tip, uB, notchTopY)
+
+    tris = []
+    tris += _quad(flushA_bot, flushB_bot, tipB_top, tipA_top)   # the ramp
+    tris += _quad(flushA_top, tipA_top, tipB_top, flushB_top)   # the flat top shelf
+    tris += [flushA_bot, tipA_top, flushA_top]                   # end cap at uA
+    tris += [flushB_bot, flushB_top, tipB_top]                   # end cap at uB
+    return tris
+
+
+def _inletRecess(faceKey, fixedValue, uA, uB, y0, y1):
+    """The matching cavity on the cap's own face, carved in mirror of
+    _notchWedge - flush at the bottom of the band, receding inward to full
+    depth at the top, closed off by the cap's own top face above it."""
+    # Opposite sign from _notchWedge's "tip": the recess goes inward into
+    # this pixel's own solid, not outward past the shared boundary.
+    recessed = fixedValue - NOTCH_DEPTH if faceKey in ('+x', '+z') else fixedValue + NOTCH_DEPTH
+
+    flushA_bot = _facePoint(faceKey, fixedValue, uA, y0)
+    flushB_bot = _facePoint(faceKey, fixedValue, uB, y0)
+    flushA_top = _facePoint(faceKey, fixedValue, uA, y1)
+    flushB_top = _facePoint(faceKey, fixedValue, uB, y1)
+    recA_top = _facePoint(faceKey, recessed, uA, y1)
+    recB_top = _facePoint(faceKey, recessed, uB, y1)
+
+    tris = []
+    tris += _quad(flushA_bot, flushB_bot, recB_top, recA_top)   # the ramp (recess floor)
+    tris += [flushA_bot, flushA_top, recA_top]                   # end wall at uA
+    tris += [flushB_bot, recB_top, flushB_top]                   # end wall at uB
+    return tris
+
+
+def _inletFace(faceKey, fixedValue, u0, u1, capY0, capY1):
+    """A cap side face with a wedge-shaped recess in its top
+    NOTCH_HEIGHT_RATIO, sized to receive a taller neighbor's notch."""
     uMid = (u0 + u1) / 2.0
     uHalf = (u1 - u0) * NOTCH_WIDTH_RATIO / 2.0
     uA, uB = uMid - uHalf, uMid + uHalf
+    notchBottomY = capY1 - NOTCH_HEIGHT_RATIO
 
     tris = []
-    tris += _faceQuad(faceKey, fixedValue, u0, uA, y0, y1)
-    tris += _faceQuad(faceKey, fixedValue, uB, u1, y0, y1)
-
-    depth = NOTCH_DEPTH
-    if faceKey == '+x':
-        tris += _box((fixedValue - depth, y0, uA), (fixedValue, y1, uB), skip={'+x'})
-    elif faceKey == '-x':
-        tris += _box((fixedValue, y0, uA), (fixedValue + depth, y1, uB), skip={'-x'})
-    elif faceKey == '+z':
-        tris += _box((uA, y0, fixedValue - depth), (uB, y1, fixedValue), skip={'+z'})
-    else:
-        tris += _box((uA, y0, fixedValue), (uB, y1, fixedValue + depth), skip={'-z'})
+    tris += _faceQuad(faceKey, fixedValue, u0, uA, capY0, capY1)              # left flank
+    tris += _faceQuad(faceKey, fixedValue, uB, u1, capY0, capY1)              # right flank
+    tris += _faceQuad(faceKey, fixedValue, uA, uB, capY0, notchBottomY)       # center strip, below the recess
+    tris += _inletRecess(faceKey, fixedValue, uA, uB, notchBottomY, capY1)    # the recess itself
     return tris
 
 
@@ -266,8 +301,7 @@ class Mesh:
                 fixedValue, u0, u1 = _faceGeometry(faceKey, x0, z0, x1, z1)
                 uMid = (u0 + u1) / 2.0
                 uHalf = (u1 - u0) * NOTCH_WIDTH_RATIO / 2.0
-                notchY0, notchY1 = nHeight - 1.0, float(nHeight)
-                tris += _notchBox(faceKey, fixedValue, uMid, uHalf, notchY0, notchY1)
+                tris += _notchWedge(faceKey, fixedValue, uMid, uHalf, float(nHeight))
 
                 drop = height - nHeight
                 tubeWidth = 1.0 - 2 * TUBE_MARGIN
