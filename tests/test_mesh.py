@@ -97,9 +97,13 @@ def test_diagonal_same_height_pixels_bulge_into_one_component(two_color_canvas):
     assert len(mesh.meshes[blueIndex]) == 1
 
 
-def test_saddle_conflict_resolves_to_lower_palette_index():
-    # A 2x2 checkerboard where both diagonals are internally eligible for a
-    # bulge at once. Only the lower palette-index color should win it.
+def test_fully_packed_checkerboard_has_no_bulge_connectivity():
+    # A 2x2 checkerboard where every side of every pixel has *some* pixel
+    # next to it (just possibly a different color) - bulging only ever
+    # happens on a genuinely clear side, so nothing bulges here and neither
+    # diagonal pair connects. (A dedicated notch-based connector for this
+    # case, keyed off palette order per the corrected spec, isn't
+    # implemented yet - see the write-up.)
     img = np.zeros((2, 2, 3), dtype=np.uint8)
     img[0, 0] = (30, 30, 200)
     img[1, 1] = (30, 30, 200)
@@ -112,12 +116,11 @@ def test_saddle_conflict_resolves_to_lower_palette_index():
     mesh.canvas = canvas
     mesh._calculateMesh()
 
-    lowIndex = canvas.map[0, 0]
-    highIndex = canvas.map[0, 1]
-    assert lowIndex < highIndex, "test assumes blue sorts before red in the palette"
-    assert len(mesh.meshes[lowIndex]) == 1
-    assert len(mesh.meshes[highIndex]) == 2
-    assert any("disconnected parts" in w for w in mesh.warnings)
+    blueIndex = canvas.map[0, 0]
+    redIndex = canvas.map[0, 1]
+    assert len(mesh.meshes[blueIndex]) == 2
+    assert len(mesh.meshes[redIndex]) == 2
+    assert sum("disconnected parts" in w for w in mesh.warnings) == 2
 
 
 def test_isolated_single_pixel_is_flagged(two_color_canvas):

@@ -3,20 +3,21 @@ from .canvas import *
 from .vector import *
 
 
-# Every layer of height is exactly 1 world unit; a pixel's cap is always
-# exactly one layer thick, so it never needs its own tunable constant.
-TUBE_MARGIN = 0.2            # how far a tube's wall is inset from the pixel's unit-square edge
+# Axes: X = pixel column, Z = pixel row, Y = height (the vertical/print
+# axis - Y-up, matching a typical game-engine convention rather than
+# Z-up). Every layer of height is exactly 1 world unit.
+TUBE_MARGIN = 0.2            # how far the tube is inset from the pixel's unit-square edge
 WALL_THICKNESS = 0.1         # shell thickness when Mesh.hollow is True
 NOTCH_DEPTH = 0.12           # how far a notch pokes past the shared pixel boundary
 NOTCH_WIDTH_RATIO = 0.5      # fraction of a face's width a notch/inlet spans, centered
-BULGE_SIZE = 0.18            # half-width of the corner-fill cube used to fuse diagonal pixels
+BULGE_SIZE = 0.18            # how far a cap flares out past the grid edge on a clear side
 
 DIRECTIONS = [
-    # name, dy, dx, box-face key
+    # name, d(row), d(col), box-face key
     ('E', 0, 1, '+x'),
     ('W', 0, -1, '-x'),
-    ('S', 1, 0, '+y'),
-    ('N', -1, 0, '-y'),
+    ('S', 1, 0, '+z'),
+    ('N', -1, 0, '-z'),
 ]
 
 
@@ -31,64 +32,63 @@ def _box(minCorner, maxCorner, skip=frozenset()):
     x1, y1, z1 = maxCorner
     tris = []
     if '-x' not in skip:
-        tris += _quad(Vector3(x0, y0, z0), Vector3(x0, y0, z1), Vector3(x0, y1, z1), Vector3(x0, y1, z0))
+        tris += _quad(Vector3(x0, y0, z0), Vector3(x0, y1, z0), Vector3(x0, y1, z1), Vector3(x0, y0, z1))
     if '+x' not in skip:
-        tris += _quad(Vector3(x1, y0, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1), Vector3(x1, y0, z1))
-    if '-y' not in skip:
-        tris += _quad(Vector3(x0, y0, z0), Vector3(x1, y0, z0), Vector3(x1, y0, z1), Vector3(x0, y0, z1))
-    if '+y' not in skip:
-        tris += _quad(Vector3(x0, y1, z0), Vector3(x0, y1, z1), Vector3(x1, y1, z1), Vector3(x1, y1, z0))
+        tris += _quad(Vector3(x1, y0, z0), Vector3(x1, y0, z1), Vector3(x1, y1, z1), Vector3(x1, y1, z0))
     if '-z' not in skip:
-        tris += _quad(Vector3(x0, y0, z0), Vector3(x0, y1, z0), Vector3(x1, y1, z0), Vector3(x1, y0, z0))
+        tris += _quad(Vector3(x0, y0, z0), Vector3(x1, y0, z0), Vector3(x1, y1, z0), Vector3(x0, y1, z0))
     if '+z' not in skip:
-        tris += _quad(Vector3(x0, y0, z1), Vector3(x1, y0, z1), Vector3(x1, y1, z1), Vector3(x0, y1, z1))
+        tris += _quad(Vector3(x0, y0, z1), Vector3(x0, y1, z1), Vector3(x1, y1, z1), Vector3(x1, y0, z1))
+    if '-y' not in skip:
+        tris += _quad(Vector3(x0, y0, z0), Vector3(x0, y0, z1), Vector3(x1, y0, z1), Vector3(x1, y0, z0))
+    if '+y' not in skip:
+        tris += _quad(Vector3(x0, y1, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1), Vector3(x0, y1, z1))
     return tris
 
 
-def _faceGeometry(faceKey, x0, y0, x1, y1):
-    """(fixed axis, fixed value, u-range) for a vertical side face."""
+def _faceGeometry(faceKey, x0, z0, x1, z1):
+    """(fixed value, u-range) for a vertical side face; u runs along Z for
+    x-faces and along X for z-faces."""
     if faceKey == '+x':
-        return 'x', x1, y0, y1
+        return x1, z0, z1
     if faceKey == '-x':
-        return 'x', x0, y0, y1
-    if faceKey == '+y':
-        return 'y', y1, x0, x1
-    return 'y', y0, x0, x1
+        return x0, z0, z1
+    if faceKey == '+z':
+        return z1, x0, x1
+    return z0, x0, x1  # '-z'
 
 
-def _facePoint(faceKey, fixedValue, u, z):
+def _facePoint(faceKey, fixedValue, u, y):
     if faceKey in ('+x', '-x'):
-        return Vector3(fixedValue, u, z)
-    return Vector3(u, fixedValue, z)
+        return Vector3(fixedValue, y, u)
+    return Vector3(u, y, fixedValue)
 
 
-def _faceQuad(faceKey, fixedValue, u0, u1, z0, z1):
-    p00 = _facePoint(faceKey, fixedValue, u0, z0)
-    p10 = _facePoint(faceKey, fixedValue, u1, z0)
-    p11 = _facePoint(faceKey, fixedValue, u1, z1)
-    p01 = _facePoint(faceKey, fixedValue, u0, z1)
-    # +x/+y faces look outward from increasing u->z; -x/-y need the opposite
-    # winding to keep the outward-facing normal on the correct side.
-    if faceKey in ('+x', '+y'):
+def _faceQuad(faceKey, fixedValue, u0, u1, y0, y1):
+    p00 = _facePoint(faceKey, fixedValue, u0, y0)
+    p10 = _facePoint(faceKey, fixedValue, u1, y0)
+    p11 = _facePoint(faceKey, fixedValue, u1, y1)
+    p01 = _facePoint(faceKey, fixedValue, u0, y1)
+    if faceKey in ('+x', '+z'):
         return _quad(p00, p10, p11, p01)
     return _quad(p10, p00, p01, p11)
 
 
-def _notchBox(faceKey, boundaryValue, uMid, uHalf, z0, z1):
-    """A tab protruding from a tube's inset wall out past the shared pixel
+def _notchBox(faceKey, boundaryValue, uMid, uHalf, y0, y1):
+    """A tab protruding from the tube's inset wall out past the shared pixel
     boundary, so it engages the neighbor's inlet pocket on the other side."""
     inward = TUBE_MARGIN
     outward = NOTCH_DEPTH
     if faceKey == '+x':
-        return _box((boundaryValue - inward, uMid - uHalf, z0), (boundaryValue + outward, uMid + uHalf, z1))
+        return _box((boundaryValue - inward, y0, uMid - uHalf), (boundaryValue + outward, y1, uMid + uHalf))
     if faceKey == '-x':
-        return _box((boundaryValue - outward, uMid - uHalf, z0), (boundaryValue + inward, uMid + uHalf, z1))
-    if faceKey == '+y':
-        return _box((uMid - uHalf, boundaryValue - inward, z0), (uMid + uHalf, boundaryValue + outward, z1))
-    return _box((uMid - uHalf, boundaryValue - outward, z0), (uMid + uHalf, boundaryValue + inward, z1))
+        return _box((boundaryValue - outward, y0, uMid - uHalf), (boundaryValue + inward, y1, uMid + uHalf))
+    if faceKey == '+z':
+        return _box((uMid - uHalf, y0, boundaryValue - inward), (uMid + uHalf, y1, boundaryValue + outward))
+    return _box((uMid - uHalf, y0, boundaryValue - outward), (uMid + uHalf, y1, boundaryValue + inward))
 
 
-def _inletFace(faceKey, fixedValue, u0, u1, z0, z1):
+def _inletFace(faceKey, fixedValue, u0, u1, y0, y1):
     """A cap side face with a full-height pocket recessed into its center,
     sized to receive a taller neighbor's notch."""
     uMid = (u0 + u1) / 2.0
@@ -96,18 +96,46 @@ def _inletFace(faceKey, fixedValue, u0, u1, z0, z1):
     uA, uB = uMid - uHalf, uMid + uHalf
 
     tris = []
-    tris += _faceQuad(faceKey, fixedValue, u0, uA, z0, z1)
-    tris += _faceQuad(faceKey, fixedValue, uB, u1, z0, z1)
+    tris += _faceQuad(faceKey, fixedValue, u0, uA, y0, y1)
+    tris += _faceQuad(faceKey, fixedValue, uB, u1, y0, y1)
 
     depth = NOTCH_DEPTH
     if faceKey == '+x':
-        tris += _box((fixedValue - depth, uA, z0), (fixedValue, uB, z1), skip={'+x'})
+        tris += _box((fixedValue - depth, y0, uA), (fixedValue, y1, uB), skip={'+x'})
     elif faceKey == '-x':
-        tris += _box((fixedValue, uA, z0), (fixedValue + depth, uB, z1), skip={'-x'})
-    elif faceKey == '+y':
-        tris += _box((uA, fixedValue - depth, z0), (uB, fixedValue, z1), skip={'+y'})
+        tris += _box((fixedValue, y0, uA), (fixedValue + depth, y1, uB), skip={'-x'})
+    elif faceKey == '+z':
+        tris += _box((uA, y0, fixedValue - depth), (uB, y1, fixedValue), skip={'+z'})
     else:
-        tris += _box((uA, fixedValue, z0), (uB, fixedValue + depth, z1), skip={'-y'})
+        tris += _box((uA, y0, fixedValue), (uB, y1, fixedValue + depth), skip={'-z'})
+    return tris
+
+
+def _collarRing(capX0, capX1, capZ0, capZ1, tubeX0, tubeX1, tubeZ0, tubeZ1, y, skipSides):
+    """The flat frame connecting the cap's (possibly bulged) outer edge to
+    the tube's narrower outer edge directly below it, at their shared
+    seam - without this, a narrower tube meeting a wider cap leaves a gap."""
+    outer = {
+        'nw': (capX0, capZ0), 'ne': (capX1, capZ0),
+        'sw': (capX0, capZ1), 'se': (capX1, capZ1),
+    }
+    inner = {
+        'nw': (tubeX0, tubeZ0), 'ne': (tubeX1, tubeZ0),
+        'sw': (tubeX0, tubeZ1), 'se': (tubeX1, tubeZ1),
+    }
+
+    def v(pt):
+        return Vector3(pt[0], y, pt[1])
+
+    tris = []
+    if '-x' not in skipSides:
+        tris += _quad(v(outer['nw']), v(outer['sw']), v(inner['sw']), v(inner['nw']))
+    if '+x' not in skipSides:
+        tris += _quad(v(outer['ne']), v(inner['ne']), v(inner['se']), v(outer['se']))
+    if '-z' not in skipSides:
+        tris += _quad(v(outer['nw']), v(inner['nw']), v(inner['ne']), v(outer['ne']))
+    if '+z' not in skipSides:
+        tris += _quad(v(outer['sw']), v(outer['se']), v(inner['se']), v(inner['sw']))
     return tris
 
 
@@ -145,80 +173,40 @@ class Mesh:
         hollowChanged = self.hollow != self.hollowCache
         return mapChanged or layersChanged or hollowChanged
 
+    def _isEmpty(self, pos):
+        return not self.canvas.positionValid(pos) or self.canvas.layers[pos] < 1
+
     def _neighborInfo(self, y, x, dy, dx):
         pos = (y + dy, x + dx)
-        if not self.canvas.positionValid(pos):
+        if self._isEmpty(pos):
             return None
-        height = self.canvas.layers[pos]
-        if height < 1:
-            return None
-        return self.canvas.map[pos], height
+        return self.canvas.map[pos], self.canvas.layers[pos]
 
     def _sameColorHeight(self, p1, p2):
-        h1, h2 = self.canvas.layers[p1], self.canvas.layers[p2]
-        if h1 < 1 or h2 < 1:
+        if self._isEmpty(p1) or self._isEmpty(p2):
             return False
-        return self.canvas.map[p1] == self.canvas.map[p2] and h1 == h2
+        return self.canvas.map[p1] == self.canvas.map[p2] and self.canvas.layers[p1] == self.canvas.layers[p2]
 
-    # Two diagonal pixel pairs sharing a 2x2 block can both be eligible for
-    # a corner bulge at once (a checkerboard "saddle" - see the write-up).
-    # Only one can physically occupy that corner: the lower palette index
-    # wins, the other pair is left as separate, unconnected pieces.
-    def _computeSaddleSuppressions(self):
-        suppressed = set()
-        rows, cols = self.canvas.map.shape
-        for y in range(rows - 1):
-            for x in range(cols - 1):
-                a1, a2 = (y, x), (y + 1, x + 1)
-                b1, b2 = (y, x + 1), (y + 1, x)
-                aEligible = self._sameColorHeight(a1, a2)
-                bEligible = self._sameColorHeight(b1, b2)
-                if aEligible and bEligible:
-                    colorA = self.canvas.map[a1]
-                    colorB = self.canvas.map[b1]
-                    if colorA <= colorB:
-                        # pair B is owned by 'NE' from its lower pixel (y+1, x),
-                        # which is the one that reaches (y, x+1) going NE.
-                        suppressed.add((y + 1, x, 'NE'))
-                    else:
-                        suppressed.add((y, x, 'SE'))
-        return suppressed
-
-    def _cornerBulges(self, y, x, height, suppressed):
-        tris = []
-        z0, z1 = height - 1.0, float(height)
-        for dName, dy, dx, cx, cy in (('SE', 1, 1, x + 1.0, y + 1.0), ('NE', -1, 1, x + 1.0, y)):
-            if (y, x, dName) in suppressed:
-                continue
-            neighbor = (y + dy, x + dx)
-            if not self.canvas.positionValid(neighbor):
-                continue
-            if not self._sameColorHeight((y, x), neighbor):
-                continue
-            tris += _box(
-                (cx - BULGE_SIZE, cy - BULGE_SIZE, z0),
-                (cx + BULGE_SIZE, cy + BULGE_SIZE, z1),
-            )
-        return tris
-
-    def _buildPixel(self, y, x, suppressedBulges):
+    def _buildPixel(self, y, x):
         height = self.canvas.layers[y, x]
         if height < 1:
             return []
 
-        x0, y0, x1, y1 = float(x), float(y), float(x) + 1.0, float(y) + 1.0
-        capZ0, capZ1 = height - 1.0, float(height)
+        x0, z0, x1, z1 = float(x), float(y), float(x) + 1.0, float(y) + 1.0
+        capY0, capY1 = height - 1.0, float(height)
+        color = self.canvas.map[y, x]
 
         fuseFaces = set()
-        inletFaces = {}   # faceKey -> neighborHeight (this pixel is shorter)
-        tubeDrops = {}     # faceKey -> neighborHeight (this pixel is taller, owns a tube+notch)
+        inletFaces = {}    # faceKey -> neighborHeight (this pixel is shorter)
+        tubeDrops = {}      # faceKey -> neighborHeight (this pixel is taller, owns a tube+notch)
+        bulgeFaces = set()  # faceKey -> this side has nothing next to it at all
 
         for _, dy, dx, faceKey in DIRECTIONS:
             info = self._neighborInfo(y, x, dy, dx)
             if info is None:
+                bulgeFaces.add(faceKey)
                 continue
             nColor, nHeight = info
-            color = self.canvas.map[y, x]
             if nColor == color and nHeight == height:
                 fuseFaces.add(faceKey)
             elif nHeight < height:
@@ -227,59 +215,59 @@ class Mesh:
                 inletFaces[faceKey] = nHeight
             # nHeight == height, different color: a plain wall, nothing special.
 
+        # A clear side's cap flares outward instead of sitting flush at the
+        # grid edge - this alone is what lets two pixels that only touch
+        # diagonally end up as one physically connected piece; nothing
+        # about it depends on color.
+        capX0 = x0 - (BULGE_SIZE if '-x' in bulgeFaces else 0.0)
+        capX1 = x1 + (BULGE_SIZE if '+x' in bulgeFaces else 0.0)
+        capZ0 = z0 - (BULGE_SIZE if '-z' in bulgeFaces else 0.0)
+        capZ1 = z1 + (BULGE_SIZE if '+z' in bulgeFaces else 0.0)
+
         tris = []
 
-        # Cap: the pixel's own top layer, full width, with inlets carved
-        # into whichever sides face a taller neighbor.
+        # Cap: the pixel's own top layer, flared on clear sides, with
+        # inlets carved into whichever sides face a taller neighbor.
         for _, _, _, faceKey in DIRECTIONS:
             if faceKey in fuseFaces:
                 continue
-            _, fixedValue, u0, u1 = _faceGeometry(faceKey, x0, y0, x1, y1)
+            fixedValue, u0, u1 = _faceGeometry(faceKey, capX0, capZ0, capX1, capZ1)
             if faceKey in inletFaces:
-                tris += _inletFace(faceKey, fixedValue, u0, u1, capZ0, capZ1)
+                tris += _inletFace(faceKey, fixedValue, u0, u1, capY0, capY1)
             else:
-                tris += _faceQuad(faceKey, fixedValue, u0, u1, capZ0, capZ1)
+                tris += _faceQuad(faceKey, fixedValue, u0, u1, capY0, capY1)
 
-        # Cap top - the only horizontal face any pixel ever draws. The
-        # cap/body seam and the body's base are both left open: they're
-        # either an internal seam between two solids of the same pixel, or
-        # the bottom face resting flush on the print bed.
         tris += _quad(
-            Vector3(x0, y0, capZ1), Vector3(x1, y0, capZ1), Vector3(x1, y1, capZ1), Vector3(x0, y1, capZ1),
+            Vector3(capX0, capY1, capZ0), Vector3(capX1, capY1, capZ0),
+            Vector3(capX1, capY1, capZ1), Vector3(capX0, capY1, capZ1),
         )
 
-        # Bulges at diagonal corners, for dithered same-color/same-height
-        # pixels that would otherwise only touch at a single edge.
-        tris += self._cornerBulges(y, x, height, suppressedBulges)
+        # Tube: always narrower than the cap (that inset is what makes room
+        # for the bulge and the notch/inlet mechanism), running from the
+        # print bed up to the underside of the cap.
+        tubeY1 = capY0
+        m = TUBE_MARGIN
+        tubeX0, tubeX1, tubeZ0, tubeZ1 = x0 + m, x1 - m, z0 + m, z1 - m
 
-        # Body: everything below the cap, down to the print bed. Any side
-        # needing a tube pulls the *entire* body in to tube width, rather
-        # than narrowing only the sides that strictly need it - simpler to
-        # generate, at the cost of narrowing some plain walls that didn't
-        # strictly need it.
-        bodyZ1 = capZ0
-        if bodyZ1 > 0:
-            tubeMode = bool(tubeDrops)
-            if tubeMode:
-                m = TUBE_MARGIN
-                bx0, by0, bx1, by1 = x0 + m, y0 + m, x1 - m, y1 - m
-            else:
-                bx0, by0, bx1, by1 = x0, y0, x1, y1
-
-            tris += _box((bx0, by0, 0.0), (bx1, by1, bodyZ1), skip=fuseFaces | {'+z', '-z'})
+        if tubeY1 > 0:
+            tris += _box((tubeX0, 0.0, tubeZ0), (tubeX1, tubeY1, tubeZ1), skip=fuseFaces | {'+y', '-y'})
 
             if self.hollow:
                 w = WALL_THICKNESS
-                ix0, iy0, ix1, iy1 = bx0 + w, by0 + w, bx1 - w, by1 - w
-                if ix1 > ix0 and iy1 > iy0:
-                    tris += _box((ix0, iy0, 0.0), (ix1, iy1, bodyZ1), skip=fuseFaces | {'+z', '-z'})
+                ix0, iz0, ix1, iz1 = tubeX0 + w, tubeZ0 + w, tubeX1 - w, tubeZ1 - w
+                if ix1 > ix0 and iz1 > iz0:
+                    tris += _box((ix0, 0.0, iz0), (ix1, tubeY1, iz1), skip=fuseFaces | {'+y', '-y'})
+
+            # Close the step where the wider (possibly bulged) cap meets
+            # the narrower tube directly beneath it.
+            tris += _collarRing(capX0, capX1, capZ0, capZ1, tubeX0, tubeX1, tubeZ0, tubeZ1, tubeY1, fuseFaces)
 
             for faceKey, nHeight in tubeDrops.items():
-                _, fixedValue, u0, u1 = _faceGeometry(faceKey, x0, y0, x1, y1)
+                fixedValue, u0, u1 = _faceGeometry(faceKey, x0, z0, x1, z1)
                 uMid = (u0 + u1) / 2.0
                 uHalf = (u1 - u0) * NOTCH_WIDTH_RATIO / 2.0
-                notchZ0, notchZ1 = nHeight - 1.0, float(nHeight)
-                tris += _notchBox(faceKey, fixedValue, uMid, uHalf, notchZ0, notchZ1)
+                notchY0, notchY1 = nHeight - 1.0, float(nHeight)
+                tris += _notchBox(faceKey, fixedValue, uMid, uHalf, notchY0, notchY1)
 
                 drop = height - nHeight
                 tubeWidth = 1.0 - 2 * TUBE_MARGIN
@@ -291,6 +279,13 @@ class Mesh:
 
         return tris
 
+    def _diagonalPairs(self, y, x):
+        """The two unique diagonal neighbor pairs owned by (y, x), each with
+        the two orthogonal cells that would have to be clear for a bulge
+        alone to connect them."""
+        yield (y + 1, x + 1), (y, x + 1), (y + 1, x)   # SE
+        yield (y - 1, x + 1), (y, x + 1), (y - 1, x)   # NE
+
     def _calculateMesh(self):
         if not self._checkForUpdate():
             return
@@ -301,7 +296,6 @@ class Mesh:
         self.warnings = []
 
         rows, cols = self.canvas.map.shape
-        suppressedBulges = self._computeSaddleSuppressions()
 
         pixelTris = {}
         parent = {}
@@ -319,29 +313,25 @@ class Mesh:
 
         for y in range(rows):
             for x in range(cols):
-                if self.canvas.layers[y, x] < 1:
-                    continue
-                parent[(y, x)] = (y, x)
+                if self.canvas.layers[y, x] >= 1:
+                    parent[(y, x)] = (y, x)
 
         for y in range(rows):
             for x in range(cols):
                 if self.canvas.layers[y, x] < 1:
                     continue
-                pixelTris[(y, x)] = self._buildPixel(y, x, suppressedBulges)
+                pixelTris[(y, x)] = self._buildPixel(y, x)
 
                 for _, dy, dx, faceKey in DIRECTIONS:
-                    info = self._neighborInfo(y, x, dy, dx)
-                    if info is None:
-                        continue
-                    nColor, nHeight = info
-                    if nColor == self.canvas.map[y, x] and nHeight == self.canvas.layers[y, x]:
-                        union((y, x), (y + dy, x + dx))
+                    if not self._isEmpty((y + dy, x + dx)):
+                        nColor, nHeight = self.canvas.map[y + dy, x + dx], self.canvas.layers[y + dy, x + dx]
+                        if nColor == self.canvas.map[y, x] and nHeight == self.canvas.layers[y, x]:
+                            union((y, x), (y + dy, x + dx))
 
-                for dName, dy, dx in (('SE', 1, 1), ('NE', -1, 1)):
-                    if (y, x, dName) in suppressedBulges:
+                for neighbor, flank1, flank2 in self._diagonalPairs(y, x):
+                    if not self.canvas.positionValid(neighbor):
                         continue
-                    neighbor = (y + dy, x + dx)
-                    if self.canvas.positionValid(neighbor) and self._sameColorHeight((y, x), neighbor):
+                    if self._sameColorHeight((y, x), neighbor) and self._isEmpty(flank1) and self._isEmpty(flank2):
                         union((y, x), neighbor)
 
         components = {}
