@@ -81,20 +81,17 @@ def test_intersect_mode_on_disjoint_colors_is_empty(canvas):
     assert canvas.selection.sum() == 0
 
 
-def test_contiguous_subtract_only_clears_the_seed_pixel(canvas):
-    # bucketSelect's flood fill refuses to walk into cells already marked
-    # selected (canvas.py: `if not self.selection[pos] ...`). A contiguous
-    # subtract over a region that is *already fully selected* therefore only
-    # ever removes the clicked pixel, not the rest of the region - pinning
-    # down that behavior rather than assuming subtract mirrors add.
+def test_contiguous_subtract_clears_the_whole_connected_region(canvas):
+    # The flood fill's visited-tracking is now local to newSelection, not
+    # tied to self.selection, so a contiguous subtract walks the full
+    # connected region regardless of what was already selected.
     canvas.bucketSelect((0, 0), mode="add", contiguous=False, diagonal=True)
     canvas.bucketSelect((0, 0), mode="subtract", contiguous=True, diagonal=True)
 
-    assert not canvas.selection[(0, 0)]
-    for pos in RED_BLOCK[1:]:
-        assert canvas.selection[pos]
+    for pos in RED_BLOCK:
+        assert not canvas.selection[pos]
     assert canvas.selection[RED_ISLAND]
-    assert canvas.selection.sum() == len(RED_BLOCK) + 1 - 1
+    assert canvas.selection.sum() == 1
 
 
 def test_invalid_mode_raises():

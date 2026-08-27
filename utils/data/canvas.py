@@ -17,7 +17,9 @@ class Canvas:
             self.map[mask] = c
 
         self.baseColor = None
-        self.layers = np.zeros_like(self.map, dtype=np.int32)
+        # -1 means "no pixel placed here yet" (empty space); valid printed
+        # pixels have a height of 1 or more, set later via the height brush.
+        self.layers = np.full_like(self.map, -1, dtype=np.int32)
 
         self.selection = np.zeros_like(self.map, dtype=np.bool)
 
@@ -140,10 +142,9 @@ class Canvas:
             check = self.validNeighbors(queue[0], diagonal)
 
             for pos in check:
-                if self.map[pos] == value:
-                    if not self.selection[pos] and not newSelection[pos]:
-                        newSelection[pos] = 1
-                        queue.append(pos)
+                if self.map[pos] == value and not newSelection[pos]:
+                    newSelection[pos] = 1
+                    queue.append(pos)
 
             queue = queue[1:]
 
