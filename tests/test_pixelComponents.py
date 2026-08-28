@@ -1,9 +1,7 @@
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import (
     Cap, Collar, Inlet, Notch, Pixel, Tube,
-    BasePeg, BaseSocket,
     elbowWallExtensions, bulgeSeamPatch,
-    BASE_PEG_DEPTH, BASE_PEG_WIDTH_RATIO,
     BULGE_SIZE, NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN, WALL_THICKNESS,
 )
 
@@ -292,71 +290,3 @@ def test_pixel_flags_a_thin_connector():
     pixel = Pixel(plan, hollow=False)
 
     assert any("Thin connector" in w for w in pixel.warnings())
-
-
-def test_base_peg_protrudes_below_y0_never_above_it():
-    peg = BasePeg(cx=0.5, cz=0.5, halfWidth=0.25)
-
-    verts = peg.triangles()
-
-    assert max(v.y for v in verts) == 0.0
-    assert min(v.y for v in verts) == -BASE_PEG_DEPTH
-
-
-def test_base_peg_tapers_narrower_at_the_tip_than_at_y0():
-    peg = BasePeg(cx=0.5, cz=0.5, halfWidth=0.25)
-
-    verts = peg.triangles()
-
-    atY0 = [v for v in verts if v.y == 0.0]
-    atTip = [v for v in verts if v.y == -BASE_PEG_DEPTH]
-    assert max(v.x for v in atY0) - min(v.x for v in atY0) == 0.5       # full width at the flush end
-    assert max(v.x for v in atTip) - min(v.x for v in atTip) < 0.5      # narrower at the tip
-
-
-def test_pixel_with_base_peg_gets_one_attached_at_y0():
-    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.WEST, Face.EAST, Face.SOUTH})
-
-    withPeg = Pixel(plan, hollow=False, basePeg=True)
-    withoutPeg = Pixel(plan, hollow=False, basePeg=False)
-
-    assert len(withPeg.triangles()) > len(withoutPeg.triangles())
-    assert any(v.y < 0.0 for v in withPeg.triangles())
-    assert not any(v.y < 0.0 for v in withoutPeg.triangles())
-
-
-def test_base_socket_opening_matches_a_base_pegs_own_footprint():
-    # A peg centered the same way should fit exactly into the socket's
-    # opening at y=0 - same halfWidth, same taper depth.
-    peg = BasePeg(cx=0.5, cz=0.5, halfWidth=0.25)
-    socket = BaseSocket(cx=0.5, cz=0.5, halfWidth=0.25)
-
-    pegVerts = peg.triangles()
-    socketVerts = socket.triangles(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y=0.0)
-
-    pegAtY0 = {round(v.x, 6) for v in pegVerts if v.y == 0.0}
-    socketAtY0 = {round(v.x, 6) for v in socketVerts if v.y == 0.0}
-    assert pegAtY0 <= socketAtY0  # the peg's own x-extent is present among the socket's y=0 vertices
-
-
-def test_base_socket_never_carves_past_its_own_cap_footprint():
-    socket = BaseSocket(cx=0.5, cz=0.5, halfWidth=0.25)
-
-    verts = socket.triangles(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y=0.0)
-
-    assert min(v.x for v in verts) >= 0.0
-    assert max(v.x for v in verts) <= 1.0
-    assert min(v.y for v in verts) == -BASE_PEG_DEPTH  # leaves solid material below the recess
-
-
-def test_pixel_with_top_socket_carves_the_cap_top_instead_of_a_flat_quad():
-    plan = PixelPlan(y=0, x=0, color=-1, height=0)
-    socket = BaseSocket(cx=0.5, cz=0.5, halfWidth=BASE_PEG_WIDTH_RATIO / 2.0)
-
-    withSocket = Pixel(plan, hollow=False, topSocket=socket)
-    withoutSocket = Pixel(plan, hollow=False)
-
-    assert len(withSocket.triangles()) > len(withoutSocket.triangles())
-    # the recess floor, distinct from the cap's own (much lower) bottom face
-    assert any(v.y == -BASE_PEG_DEPTH for v in withSocket.triangles())
-    assert not any(v.y == -BASE_PEG_DEPTH for v in withoutSocket.triangles())

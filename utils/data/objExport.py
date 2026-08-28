@@ -17,8 +17,7 @@ def writeObj(triangles, path):
 def exportMeshObjs(mesh, outputDir, baseName="pixelart"):
     """Write one OBJ file per disconnected component in mesh.meshes (a
     color rarely ends up as a single physically connected piece - see
-    Mesh.warnings), plus one for the base plate (mesh.baseMesh). Returns
-    the list of file paths written."""
+    Mesh.warnings). Returns the list of file paths written."""
     os.makedirs(outputDir, exist_ok=True)
 
     paths = []
@@ -30,13 +29,4 @@ def exportMeshObjs(mesh, outputDir, baseName="pixelart"):
             path = os.path.join(outputDir, filename)
             writeObj(triangles, path)
             paths.append(path)
-
-    for partIndex, triangles in enumerate(mesh.baseMesh):
-        if not triangles:
-            continue
-        filename = f"{baseName}_base_part{partIndex}.obj"
-        path = os.path.join(outputDir, filename)
-        writeObj(triangles, path)
-        paths.append(path)
-
     return paths

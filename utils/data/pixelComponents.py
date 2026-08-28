@@ -12,9 +12,6 @@ NOTCH_HEIGHT_RATIO = 0.4     # notch/inlet height as a fraction of the cap's own
 NOTCH_TOP_MARGIN = 0.2       # gap left above the notch/inlet band, so it isn't flush with the top edge
 BULGE_SIZE = 0.18            # how far a cap flares out past the grid edge on a clear side
 THIN_CONNECTOR_RATIO = 5     # a notch's height drop past this multiple of the tube's width gets flagged
-BASE_PEG_DEPTH = 0.3         # how far a base-interface peg protrudes below y=0 into the base plate
-BASE_PEG_WIDTH_RATIO = 0.5   # fraction of the pixel's own footprint a base peg spans, centered
-BASE_PEG_TAPER = 0.08        # how much narrower (per side) a base peg gets at full depth vs at y=0
 
 
 def _quad(a, b, c, d):
@@ -154,101 +151,16 @@ class Inlet:
         return tris
 
 
-def _frustumRingCorners(cx, cz, halfWidth, y):
-    return {
-        'nw': Vector3(cx - halfWidth, y, cz - halfWidth), 'ne': Vector3(cx + halfWidth, y, cz - halfWidth),
-        'sw': Vector3(cx - halfWidth, y, cz + halfWidth), 'se': Vector3(cx + halfWidth, y, cz + halfWidth),
-    }
-
-
-def _frustumSideFaces(tip, flush, reverse=False):
-    """The 4 tapering side quads between a narrower `tip` ring and a wider
-    `flush` ring, using the same corner order _box() uses for its own
-    side faces (so the default winding faces outward, like a protruding
-    peg); `reverse` flips every quad to face inward instead, for a
-    socket carved into material."""
-    corners = [
-        (tip['nw'], flush['nw'], flush['sw'], tip['sw']),   # west
-        (tip['ne'], tip['se'], flush['se'], flush['ne']),   # east
-        (tip['nw'], tip['ne'], flush['ne'], flush['nw']),   # north
-        (tip['sw'], flush['sw'], flush['se'], tip['se']),   # south
-    ]
-    tris = []
-    for a, b, c, d in corners:
-        tris += _quad(d, c, b, a) if reverse else _quad(a, b, c, d)
-    return tris
-
-
-class BasePeg:
-    """A tapered peg protruding straight down from a pixel's own bottom
-    (tube or cap) at y=0, into the base plate below it. Assembly onto the
-    base is already a straight vertical placement, so unlike the
-    horizontal Notch there's no sideways camming to do - the taper here
-    is purely a lead-in chamfer, easing alignment into the matching
-    BaseSocket."""
-
-    def __init__(self, cx, cz, halfWidth):
-        self.cx, self.cz = cx, cz
-        self.halfWidth = halfWidth
-
-    def triangles(self):
-        flush = _frustumRingCorners(self.cx, self.cz, self.halfWidth, 0.0)
-        tipWidth = max(self.halfWidth - BASE_PEG_TAPER, 0.01)
-        tip = _frustumRingCorners(self.cx, self.cz, tipWidth, -BASE_PEG_DEPTH)
-
-        tris = _frustumSideFaces(tip, flush)
-        tris += _quad(flush['nw'], flush['ne'], flush['se'], flush['sw'])  # flush top, closes against the tube/cap above
-        tris += _quad(tip['nw'], tip['sw'], tip['se'], tip['ne'])          # tip, facing down
-        return tris
-
-
-class BaseSocket:
-    """The matching cavity for a BasePeg, carved into a base cell's cap
-    top in place of the plain flat quad Cap normally draws there: a
-    rectangular frame around the opening, the cavity's own tapering
-    walls (the mirror image of the peg, facing inward), and a floor
-    closing it off from the solid material still below."""
-
-    def __init__(self, cx, cz, halfWidth):
-        self.cx, self.cz = cx, cz
-        self.halfWidth = halfWidth
-
-    def triangles(self, x0, x1, z0, z1, y):
-        cx, cz, w0 = self.cx, self.cz, self.halfWidth
-        sx0, sx1, sz0, sz1 = cx - w0, cx + w0, cz - w0, cz + w0
-
-        tris = self._frame(x0, x1, z0, z1, sx0, sx1, sz0, sz1, y)
-
-        flush = _frustumRingCorners(cx, cz, w0, y)
-        tipWidth = max(w0 - BASE_PEG_TAPER, 0.01)
-        tip = _frustumRingCorners(cx, cz, tipWidth, y - BASE_PEG_DEPTH)
-        tris += _frustumSideFaces(tip, flush, reverse=True)
-        tris += _quad(tip['nw'], tip['ne'], tip['se'], tip['sw'])  # floor, facing up into the cavity
-        return tris
-
-    @staticmethod
-    def _frame(x0, x1, z0, z1, sx0, sx1, sz0, sz1, y):
-        def flatQuad(a0, a1, b0, b1):
-            return _quad(Vector3(a0, y, b0), Vector3(a1, y, b0), Vector3(a1, y, b1), Vector3(a0, y, b1))
-
-        tris = flatQuad(x0, x1, z0, sz0)     # north strip
-        tris += flatQuad(x0, x1, sz1, z1)    # south strip
-        tris += flatQuad(x0, sx0, sz0, sz1)  # west strip
-        tris += flatQuad(sx1, x1, sz0, sz1)  # east strip
-        return tris
-
-
 class Cap:
     """The pixel's own top layer: a full-width unit-height slab, flared
     outward on any clear (bulged) side, with an Inlet cut into any side
     facing a taller neighbor, and simply omitted on any fused side."""
 
-    def __init__(self, x0, x1, z0, z1, y0, y1, openFaces, inlets, topSocket=None):
+    def __init__(self, x0, x1, z0, z1, y0, y1, openFaces, inlets):
         self.x0, self.x1, self.z0, self.z1 = x0, x1, z0, z1
         self.y0, self.y1 = y0, y1
         self.openFaces = openFaces
         self.inlets = {inlet.face: inlet for inlet in inlets}
-        self.topSocket = topSocket
 
     def triangles(self):
         tris = []
@@ -261,13 +173,10 @@ class Cap:
                 fixedValue, u0, u1 = _faceRange(face, self.x0, self.z0, self.x1, self.z1)
                 tris += _faceQuad(face, fixedValue, u0, u1, self.y0, self.y1)
 
-        if self.topSocket is not None:
-            tris += self.topSocket.triangles(self.x0, self.x1, self.z0, self.z1, self.y1)
-        else:
-            tris += _quad(
-                Vector3(self.x0, self.y1, self.z0), Vector3(self.x1, self.y1, self.z0),
-                Vector3(self.x1, self.y1, self.z1), Vector3(self.x0, self.y1, self.z1),
-            )
+        tris += _quad(
+            Vector3(self.x0, self.y1, self.z0), Vector3(self.x1, self.y1, self.z0),
+            Vector3(self.x1, self.y1, self.z1), Vector3(self.x0, self.y1, self.z1),
+        )
         # The same face, copied down to y0 and wound the other way round so
         # it faces down instead of up - without it the cap is an open shell
         # on its underside, relying on whatever sits below to close it.
@@ -472,7 +381,7 @@ class Pixel:
     PixelPlan: a Cap, and - if the pixel is taller than one layer - a
     Tube and the Collar closing the seam between them."""
 
-    def __init__(self, plan, hollow: bool, topSocket=None, basePeg: bool = False):
+    def __init__(self, plan, hollow: bool):
         self.plan = plan
 
         x0, z0 = float(plan.x), float(plan.y)
@@ -488,12 +397,7 @@ class Pixel:
             fixedValue, u0, u1 = _faceRange(face, capX0, capZ0, capX1, capZ1)
             inlets.append(Inlet(face, fixedValue, u0, u1, capY0, capY1))
 
-        self.cap = Cap(capX0, capX1, capZ0, capZ1, capY0, capY1, plan.fused, inlets, topSocket=topSocket)
-
-        # y=0 is where every pixel's solid meets the base plate, whether or
-        # not it has a tube (a single-layer pixel's cap already starts
-        # there) - so a base peg always attaches at the same place.
-        self.basePeg = BasePeg(x0 + 0.5, z0 + 0.5, BASE_PEG_WIDTH_RATIO / 2.0) if basePeg else None
+        self.cap = Cap(capX0, capX1, capZ0, capZ1, capY0, capY1, plan.fused, inlets)
 
         self.tube = None
         self.collar = None
@@ -527,8 +431,6 @@ class Pixel:
         if self.tube:
             tris += self.tube.triangles()
             tris += self.collar.triangles()
-        if self.basePeg:
-            tris += self.basePeg.triangles()
         return tris
 
     def warnings(self):

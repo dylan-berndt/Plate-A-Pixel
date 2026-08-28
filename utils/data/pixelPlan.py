@@ -87,34 +87,6 @@ class PixelPlan:
         return self.fused | self.plainWalls
 
 
-def planBaseGrid(rows, cols, margin):
-    """PixelPlans for the base plate's own grid: a solid filled rectangle
-    spanning the canvas's rows/cols expanded by `margin` cells in every
-    direction, at height 0 (a Pixel built from height 0 is exactly one
-    cap-only layer with no tube - see Pixel) - every cell fused to every
-    neighbor also within that rectangle, bulged only at the plate's own
-    outer edge. This grid always exists in full, independent of which
-    canvas cells are actually occupied."""
-    y0, y1 = -margin, rows + margin
-    x0, x1 = -margin, cols + margin
-
-    def inRect(pos):
-        y, x = pos
-        return y0 <= y < y1 and x0 <= x < x1
-
-    plans = {}
-    for y in range(y0, y1):
-        for x in range(x0, x1):
-            plan = PixelPlan(y=y, x=x, color=-1, height=0)
-            for face in Face:
-                if inRect(face.neighbor(y, x)):
-                    plan.fused.add(face)
-                else:
-                    plan.bulged.add(face)
-            plans[(y, x)] = plan
-    return plans
-
-
 class PixelPlanner:
     """Reads the canvas and classifies each occupied cell into a
     PixelPlan, plus the diagonal-connectivity checks used to group pixels
