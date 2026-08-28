@@ -149,6 +149,79 @@ def test_hollow_flag_adds_an_inner_shell_wall(two_color_canvas):
     assert total_triangles(hollow) > total_triangles(solid)
 
 
+def test_base_plate_fills_the_canvas_footprint_with_zero_margin(two_color_canvas):
+    two_color_canvas.layers[0, 0] = 3
+
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh.baseMargin = 0
+    mesh._calculateMesh()
+
+    assert len(mesh.baseMesh) == 1
+    verts = mesh.baseMesh[0]
+    assert len(verts) > 0
+    rows, cols = two_color_canvas.map.shape
+    assert min(v.x for v in verts) >= -0.2  # a small bulge past 0 at the outer edge, nothing further
+    assert max(v.x for v in verts) <= cols + 0.2
+    assert min(v.z for v in verts) >= -0.2
+    assert max(v.z for v in verts) <= rows + 0.2
+
+
+def test_base_plate_margin_extends_the_footprint(two_color_canvas):
+    two_color_canvas.layers[0, 0] = 3
+
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh.baseMargin = 2
+    mesh._calculateMesh()
+
+    verts = mesh.baseMesh[0]
+    rows, cols = two_color_canvas.map.shape
+    assert min(v.x for v in verts) < -1.0   # reaches out past the canvas edge by the margin
+    assert max(v.x for v in verts) > cols + 1.0
+
+
+def test_base_plate_carries_a_socket_under_every_occupied_pixel():
+    from utils.data.pixelComponents import BASE_PEG_DEPTH
+
+    canvas = make_two_color_canvas()
+    canvas.layers[0, 0] = 3
+    canvas.layers[0, 1] = 3
+
+    mesh = Mesh()
+    mesh.canvas = canvas
+    mesh._calculateMesh()
+
+    verts = mesh.baseMesh[0]
+    # the socket recess floor sits at this specific shallow negative y -
+    # the base cell's own (much lower) cap bottom doesn't reach that high
+    assert any(v.y == -BASE_PEG_DEPTH for v in verts)
+
+
+def test_base_plate_has_no_socket_when_canvas_is_entirely_empty(two_color_canvas):
+    from utils.data.pixelComponents import BASE_PEG_DEPTH
+
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh._calculateMesh()
+
+    verts = mesh.baseMesh[0]
+    assert len(verts) > 0                                 # the plate itself still exists
+    assert not any(v.y == -BASE_PEG_DEPTH for v in verts)  # but nothing carved a socket into it
+
+
+def test_real_pixels_get_a_base_peg_reaching_below_y0(two_color_canvas):
+    two_color_canvas.layers[0, 0] = 3
+
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh._calculateMesh()
+
+    blueIndex = two_color_canvas.map[0, 0]
+    verts = mesh.meshes[blueIndex][0]
+    assert any(v.y < 0.0 for v in verts)
+
+
 def test_thin_connector_is_flagged(two_color_canvas):
     # A large height gap between two adjacent, differently colored pixels
     # produces a tall, narrow connector - worth a soft warning, not a hard

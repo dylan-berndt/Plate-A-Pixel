@@ -1,7 +1,7 @@
 import numpy as np
 
 from utils.data.canvas import Canvas
-from utils.data.pixelPlan import Face, PixelPlanner
+from utils.data.pixelPlan import Face, PixelPlanner, planBaseGrid
 
 
 def make_canvas():
@@ -121,3 +121,32 @@ def test_diagonal_connection_false_when_a_flanking_cell_is_occupied():
     connections = dict(PixelPlanner(canvas).diagonalConnections(0, 0))
 
     assert connections[(1, 1)] is False
+
+
+def test_plan_base_grid_covers_exactly_the_expanded_rectangle():
+    plans = planBaseGrid(rows=2, cols=3, margin=1)
+
+    assert set(plans.keys()) == {(y, x) for y in range(-1, 3) for x in range(-1, 4)}
+    assert all(p.height == 0 for p in plans.values())
+
+
+def test_plan_base_grid_fuses_every_interior_neighbor():
+    plans = planBaseGrid(rows=2, cols=3, margin=1)
+
+    interior = plans[(0, 0)]  # has all 4 neighbors within the expanded rect
+    assert interior.fused == set(Face)
+    assert interior.bulged == set()
+
+
+def test_plan_base_grid_bulges_only_at_the_outer_edge():
+    plans = planBaseGrid(rows=2, cols=3, margin=1)
+
+    corner = plans[(-1, -1)]  # the plate's own outermost corner
+    assert Face.NORTH in corner.bulged and Face.WEST in corner.bulged
+    assert Face.EAST in corner.fused and Face.SOUTH in corner.fused
+
+
+def test_plan_base_grid_with_zero_margin_matches_the_canvas_exactly():
+    plans = planBaseGrid(rows=2, cols=2, margin=0)
+
+    assert set(plans.keys()) == {(0, 0), (0, 1), (1, 0), (1, 1)}

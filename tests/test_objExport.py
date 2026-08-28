@@ -49,7 +49,7 @@ def test_export_mesh_objs_writes_one_file_per_disconnected_component(tmp_path):
 
     paths = exportMeshObjs(mesh, str(tmp_path))
 
-    totalComponents = sum(len(components) for components in mesh.meshes)
+    totalComponents = sum(len(components) for components in mesh.meshes) + len(mesh.baseMesh)
     assert len(paths) == totalComponents
     for path in paths:
         assert path.endswith(".obj")
@@ -60,6 +60,7 @@ def test_export_mesh_objs_writes_one_file_per_disconnected_component(tmp_path):
 def test_export_mesh_objs_skips_empty_components(tmp_path):
     class FakeMesh:
         meshes = [[[]], [[Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]]]
+        baseMesh = [[]]
 
     paths = exportMeshObjs(FakeMesh(), str(tmp_path))
 

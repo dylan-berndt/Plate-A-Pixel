@@ -6,6 +6,7 @@ from utils import *
 
 MIN_HEIGHT = 1
 MAX_HEIGHT = 4
+BASE_MARGIN = 2
 OUTPUT_DIR = "output"
 
 app = QApplication(sys.argv)
@@ -23,6 +24,7 @@ for y in range(rows):
 mesh = Mesh()
 mesh.canvas = canvas
 mesh.hollow = True
+mesh.baseMargin = BASE_MARGIN
 mesh._calculateMesh()
 
 paths = exportMeshObjs(mesh, OUTPUT_DIR)
