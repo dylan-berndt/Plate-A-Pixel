@@ -22,6 +22,7 @@ for y in range(rows):
 
 mesh = Mesh()
 mesh.canvas = canvas
+mesh.hollow = True
 mesh._calculateMesh()
 
 paths = exportMeshObjs(mesh, OUTPUT_DIR)
