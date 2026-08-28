@@ -1,7 +1,7 @@
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import (
     Cap, Collar, Inlet, Notch, Pixel, Tube,
-    cornerFillTriangles,
+    elbowWallExtensions,
     NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN,
 )
 
@@ -136,35 +136,39 @@ def test_pixel_collar_omits_the_plain_wall_side_too():
     assert Face.EAST in pixel.collar.skipFaces
 
 
-def test_corner_fill_is_a_single_quad_in_the_omitted_shared_walls_plane():
-    # A is fused EAST (to B) and NORTH (to some third pixel, flush there);
-    # B is only fused WEST, so its own north side is bulged/inset. A's
-    # east wall and B's west wall are both omitted (they're fused), but
-    # B's own material only starts at z=1.2, leaving A's boundary open
-    # and unbacked for z in [1.0, 1.2]. The fix is exactly that one flat
-    # quad, sitting in the same plane as the omitted A/B wall (constant
-    # x = the shared seam) - not a box, not a diagonal bridge.
-    planA = PixelPlan(y=1, x=1, color=0, height=3, fused={Face.EAST, Face.NORTH}, bulged={Face.WEST, Face.SOUTH})
-    planB = PixelPlan(y=1, x=2, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
-    pixelA = Pixel(planA, hollow=False)
-    pixelB = Pixel(planB, hollow=False)
+def test_elbow_wall_extensions_meet_inside_the_elbow_pixel():
+    # P=(0,1) is fused SOUTH (to the elbow at (1,1)) and draws its own
+    # EAST wall. Q=(1,2) is fused WEST (to the same elbow) and draws its
+    # own NORTH wall. P and Q are not fused to each other at all - they
+    # only relate diagonally, through the elbow. Each wall should extend,
+    # staying in its own plane, out to exactly where the other one sits.
+    planP = PixelPlan(y=0, x=1, color=0, height=3, fused={Face.SOUTH}, bulged={Face.NORTH, Face.WEST, Face.EAST})
+    planQ = PixelPlan(y=1, x=2, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
+    P = Pixel(planP, hollow=False)
+    Q = Pixel(planQ, hollow=False)
 
-    fill = cornerFillTriangles(pixelA, pixelB, Face.EAST, Face.NORTH)
+    fill = elbowWallExtensions(P, Q, Face.NORTH, Face.EAST)
 
-    assert len(fill) == 6  # one quad, 2 triangles
-    xs = {v.x for v in fill}
-    assert xs == {pixelA.tube.x1}  # entirely in the seam plane - both pixels' shared x, nothing wider
-    zs = {v.z for v in fill}
-    assert zs == {pixelA.tube.z0, pixelB.tube.z0}  # spans exactly the mismatched gap, nothing more
+    assert len(fill) == 12  # two quads (P's extension, Q's extension), 2 triangles each
+
+    pExtension, qExtension = fill[:6], fill[6:]
+
+    assert {v.x for v in pExtension} == {P.tube.x1}  # stays in P's own east-wall plane
+    assert {v.z for v in pExtension} == {P.tube.z1, Q.tube.z0}  # extends exactly to Q's north wall
+
+    assert {v.z for v in qExtension} == {Q.tube.z0}  # stays in Q's own north-wall plane
+    assert {v.x for v in qExtension} == {Q.tube.x0, P.tube.x1}  # extends exactly to P's east wall
 
 
-def test_corner_fill_is_empty_when_sides_already_agree():
-    planA = PixelPlan(y=1, x=1, color=0, height=3, fused={Face.EAST, Face.NORTH}, bulged={Face.WEST, Face.SOUTH})
-    planB = PixelPlan(y=1, x=2, color=0, height=3, fused={Face.WEST, Face.NORTH}, bulged={Face.EAST, Face.SOUTH})
-    pixelA = Pixel(planA, hollow=False)
-    pixelB = Pixel(planB, hollow=False)
+def test_elbow_wall_extensions_empty_when_sides_are_already_flush():
+    # If P's own east side (and Q's own north side) are already flush
+    # rather than bulged, there's no wall to extend.
+    planP = PixelPlan(y=0, x=1, color=0, height=3, fused={Face.SOUTH, Face.EAST}, bulged={Face.NORTH, Face.WEST})
+    planQ = PixelPlan(y=1, x=2, color=0, height=3, fused={Face.WEST, Face.NORTH}, bulged={Face.EAST, Face.SOUTH})
+    P = Pixel(planP, hollow=False)
+    Q = Pixel(planQ, hollow=False)
 
-    assert cornerFillTriangles(pixelA, pixelB, Face.EAST, Face.NORTH) == []
+    assert elbowWallExtensions(P, Q, Face.NORTH, Face.EAST) == []
 
 
 def test_pixel_flags_a_thin_connector():

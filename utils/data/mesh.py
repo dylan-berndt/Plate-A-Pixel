@@ -1,15 +1,16 @@
 import numpy as np
 from .canvas import *
 from .pixelPlan import Face, PixelPlanner
-from .pixelComponents import Pixel, cornerFillTriangles
+from .pixelComponents import Pixel, elbowWallExtensions
 
-# For each fused direction, the two perpendicular sides that can disagree
-# on their own margin and need a corner-fill check. Only EAST and SOUTH
-# are used as the "primary" direction so each fused pair is visited once.
-_PERPENDICULAR_FACES = {
-    Face.EAST: (Face.NORTH, Face.SOUTH),
-    Face.SOUTH: (Face.EAST, Face.WEST),
-}
+# The four ways a pixel can be fused to two perpendicular neighbors at
+# once - each pairing identifies one "elbow": the pixel itself, plus the
+# neighbor toward f1 and the neighbor toward f2, which aren't fused to
+# each other at all.
+_ELBOW_PAIRS = [
+    (Face.NORTH, Face.EAST), (Face.NORTH, Face.WEST),
+    (Face.SOUTH, Face.EAST), (Face.SOUTH, Face.WEST),
+]
 
 
 class Mesh:
@@ -98,17 +99,16 @@ class Mesh:
 
             if not pixel.tube:
                 continue
-            for mainFace, perpFaces in _PERPENDICULAR_FACES.items():
-                if mainFace not in pixel.plan.fused:
+            for f1, f2 in _ELBOW_PAIRS:
+                if f1 not in pixel.plan.fused or f2 not in pixel.plan.fused:
                     continue
-                neighborPos = mainFace.neighbor(y, x)
-                neighborPixel = pixels.get(neighborPos)
-                if neighborPixel is None or not neighborPixel.tube:
+                P = pixels.get(f1.neighbor(y, x))
+                Q = pixels.get(f2.neighbor(y, x))
+                if P is None or Q is None or not P.tube or not Q.tube:
                     continue
-                for perpFace in perpFaces:
-                    fill = cornerFillTriangles(pixel, neighborPixel, mainFace, perpFace)
-                    if fill:
-                        cornerFills.setdefault((y, x), []).extend(fill)
+                fill = elbowWallExtensions(P, Q, f1, f2)
+                if fill:
+                    cornerFills.setdefault((y, x), []).extend(fill)
 
         components = {}
         componentPixelCount = {}

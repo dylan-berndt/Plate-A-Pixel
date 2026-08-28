@@ -256,30 +256,37 @@ def _tubeBoundary(tube, face):
     return tube.x1  # Face.EAST
 
 
-def cornerFillTriangles(pixelA, pixelB, mainFace, perpFace):
-    """Two pixels fused on their shared mainFace side can still disagree
-    on a *perpendicular* side's margin - e.g. A is also fused north
-    (flush) while B's own north side is bulged (inset). Both walls
-    already end at the exact same seam coordinate (that's what fused
-    means), so nothing needs to get wider - they just stop at different
-    heights on the other axis. This is the one missing quad connecting
-    the flush wall's end directly to the inset wall's start, right at
-    the seam - not a box, just that single connector face."""
-    aFlush = perpFace in pixelA.plan.flushTubeSides
-    bFlush = perpFace in pixelB.plan.flushTubeSides
-    if aFlush == bFlush:
+def _wallExtension(pixel, wallFace, seamValue, targetValue):
+    """A longer version of `pixel`'s own wallFace wall: same plane, same
+    orientation, its u-range just widened from its current flush end
+    (seamValue) out to targetValue. Not a new face in a different plane -
+    literally that wall, extended."""
+    if seamValue == targetValue:
         return []
+    fixedValue = _tubeBoundary(pixel.tube, wallFace)
+    u0, u1 = sorted((seamValue, targetValue))
+    return _faceQuad(wallFace, fixedValue, u0, u1, 0.0, pixel.tube.y1)
 
-    flushPixel, insetPixel = (pixelA, pixelB) if aFlush else (pixelB, pixelA)
-    flushVal = _tubeBoundary(flushPixel.tube, perpFace)
-    insetVal = _tubeBoundary(insetPixel.tube, perpFace)
-    lo, hi = sorted((flushVal, insetVal))
-    y1 = insetPixel.tube.y1
 
-    nearFace = mainFace.opposite if insetPixel is pixelB else mainFace
-    seamValue = _tubeBoundary(insetPixel.tube, nearFace)
-
-    return _faceQuad(nearFace, seamValue, lo, hi, 0.0, y1)
+def elbowWallExtensions(P, Q, f1, f2):
+    """P and Q are diagonal neighbors of a shared "elbow" pixel, fused to
+    it via the perpendicular faces f1 (toward P) and f2 (toward Q) - P and
+    Q are not fused to each other at all. Each already draws its own wall
+    facing the other's general direction (P's f2 wall, Q's f1 wall), but
+    each stops short at its own flush boundary with the elbow. This
+    extends each wall's own length, in its own plane, out to wherever the
+    other one's wall actually sits, so they cross inside the elbow
+    pixel's footprint instead of leaving a gap between them."""
+    tris = []
+    if f2 not in P.plan.flushTubeSides:
+        seamP = _tubeBoundary(P.tube, f1.opposite)
+        targetP = _tubeBoundary(Q.tube, f1)
+        tris += _wallExtension(P, f2, seamP, targetP)
+    if f1 not in Q.plan.flushTubeSides:
+        seamQ = _tubeBoundary(Q.tube, f2.opposite)
+        targetQ = _tubeBoundary(P.tube, f2)
+        tris += _wallExtension(Q, f1, seamQ, targetQ)
+    return tris
 
 
 class Pixel:
