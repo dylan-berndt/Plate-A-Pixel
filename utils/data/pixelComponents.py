@@ -269,7 +269,14 @@ class Tube:
             x0, x1 = self.x0, self.x1
         if x1 <= x0 or z1 <= z0:
             return []
-        return _box((x0, 0.0, z0), (x1, self.y1, z1), skip={'+y', '-y'})
+        # Fully closed on its own, top and bottom included: the cap's own
+        # bottom face (see Cap.triangles) does cover this box's footprint
+        # from above, but as one flat quad spanning the whole cap it doesn't
+        # share edges with this box's small rim - a seam a strict manifold
+        # check would flag, even though nothing's actually open there. Not
+        # depending on that alignment at all is simpler than trying to keep
+        # the two in sync.
+        return _box((x0, 0.0, z0), (x1, self.y1, z1))
 
 
 def _tubeBoundary(tube, face):

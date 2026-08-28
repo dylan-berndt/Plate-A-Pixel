@@ -115,6 +115,34 @@ def test_tube_hollow_walls_of_two_adjacent_sides_meet_with_no_gap_at_the_corner(
     assert min(v.z for v in west) <= tube.z0   # west wall reaches at least to the north wall's outer face
 
 
+def test_tube_hollow_wall_has_a_floor_at_the_print_bed():
+    # Nothing sits below y=0 - without a floor of its own, this box is an
+    # open tube with a bare, zero-thickness rim right where it meets the
+    # print bed.
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+
+    northWall = tube._wallBox(Face.NORTH)
+    triangles = [northWall[i:i + 3] for i in range(0, len(northWall), 3)]
+    floorTriangles = [tri for tri in triangles if all(v.y == 0.0 for v in tri)]
+
+    assert len(floorTriangles) == 2  # a full floor quad, split into 2 triangles
+
+
+def test_tube_hollow_wall_is_a_fully_closed_box_on_its_own():
+    # Self-contained regardless of what the cap above it does - not just a
+    # floor, a matching ceiling too, so this box doesn't depend on lining
+    # up edge-for-edge with the cap's own (separately triangulated) bottom
+    # face to actually be watertight.
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+
+    northWall = tube._wallBox(Face.NORTH)
+    triangles = [northWall[i:i + 3] for i in range(0, len(northWall), 3)]
+    ceilingTriangles = [tri for tri in triangles if all(v.y == tube.y1 for v in tri)]
+
+    assert len(ceilingTriangles) == 2
+    assert len(northWall) == 6 * 6  # a plain closed box: 6 quads, 2 triangles each
+
+
 def test_tube_omits_a_fused_face():
     closed = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
     withFused = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces={Face.EAST}, hollow=False, notches=[])
