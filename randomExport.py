@@ -23,7 +23,6 @@ for c, color in enumerate(canvas.palette):
     canvas.transformSelection(c)
 
 mesh = Mesh()
-mesh.hollow = True
 mesh.canvas = canvas
 mesh.hollow = True
 mesh.baseMargin = BASE_MARGIN
