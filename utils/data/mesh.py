@@ -1,7 +1,15 @@
 import numpy as np
 from .canvas import *
 from .pixelPlan import Face, PixelPlanner
-from .pixelComponents import Pixel
+from .pixelComponents import Pixel, cornerFillTriangles
+
+# For each fused direction, the two perpendicular sides that can disagree
+# on their own margin and need a corner-fill check. Only EAST and SOUTH
+# are used as the "primary" direction so each fused pair is visited once.
+_PERPENDICULAR_FACES = {
+    Face.EAST: (Face.NORTH, Face.SOUTH),
+    Face.SOUTH: (Face.EAST, Face.WEST),
+}
 
 
 class Mesh:
@@ -79,6 +87,7 @@ class Mesh:
                 pixels[(y, x)] = Pixel(plan, self.hollow)
                 parent[(y, x)] = (y, x)
 
+        cornerFills = {}
         for (y, x), pixel in pixels.items():
             for face in Face:
                 if face in pixel.plan.fused:
@@ -87,11 +96,26 @@ class Mesh:
                 if connected:
                     union((y, x), neighbor)
 
+            if not pixel.tube:
+                continue
+            for mainFace, perpFaces in _PERPENDICULAR_FACES.items():
+                if mainFace not in pixel.plan.fused:
+                    continue
+                neighborPos = mainFace.neighbor(y, x)
+                neighborPixel = pixels.get(neighborPos)
+                if neighborPixel is None or not neighborPixel.tube:
+                    continue
+                for perpFace in perpFaces:
+                    fill = cornerFillTriangles(pixel, neighborPixel, perpFace)
+                    if fill:
+                        cornerFills.setdefault((y, x), []).extend(fill)
+
         components = {}
         componentPixelCount = {}
         for pos, pixel in pixels.items():
             key = (pixel.plan.color, find(pos))
             components.setdefault(key, []).extend(pixel.triangles())
+            components[key].extend(cornerFills.get(pos, []))
             componentPixelCount[key] = componentPixelCount.get(key, 0) + 1
             self.warnings.extend(pixel.warnings())
 

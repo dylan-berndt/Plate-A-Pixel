@@ -246,6 +246,41 @@ class Tube:
         return tris
 
 
+def _tubeBoundary(tube, face):
+    if face is Face.NORTH:
+        return tube.z0
+    if face is Face.SOUTH:
+        return tube.z1
+    if face is Face.WEST:
+        return tube.x0
+    return tube.x1  # Face.EAST
+
+
+def cornerFillTriangles(pixelA, pixelB, perpFace):
+    """Two pixels fused on a shared side can still disagree on a
+    *perpendicular* side's margin - e.g. A is also fused north (flush)
+    while B's own north side is bulged (inset). Their tubes then meet
+    flush along the shared seam but step apart on the perpendicular one,
+    leaving an L-shaped notch right at the corner even though they're the
+    same physical piece. This patches that notch with a small box sized
+    to the more-inset pixel's own footprint, filling it up to its flush
+    neighbor's boundary."""
+    aFlush = perpFace in pixelA.plan.flushTubeSides
+    bFlush = perpFace in pixelB.plan.flushTubeSides
+    if aFlush == bFlush:
+        return []
+
+    flushPixel, insetPixel = (pixelA, pixelB) if aFlush else (pixelB, pixelA)
+    flushVal = _tubeBoundary(flushPixel.tube, perpFace)
+    insetVal = _tubeBoundary(insetPixel.tube, perpFace)
+    lo, hi = sorted((flushVal, insetVal))
+    y1 = insetPixel.tube.y1
+
+    if perpFace.axis == 'z':
+        return _box((insetPixel.tube.x0, 0.0, lo), (insetPixel.tube.x1, y1, hi))
+    return _box((lo, 0.0, insetPixel.tube.z0), (hi, y1, insetPixel.tube.z1))
+
+
 class Pixel:
     """The full solid for one occupied grid cell, assembled from a
     PixelPlan: a Cap, and - if the pixel is taller than one layer - a
