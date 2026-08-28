@@ -15,12 +15,14 @@ if canvas is None:
     print("No image selected.")
     sys.exit(0)
 
-rows, cols = canvas.map.shape
-for y in range(rows):
-    for x in range(cols):
-        canvas.layers[y, x] = random.randint(MIN_HEIGHT, MAX_HEIGHT)
+print(canvas.scale)
+
+for c, color in enumerate(canvas.palette):
+    canvas.wandSelect(color)
+    canvas.transformSelection(c)
 
 mesh = Mesh()
+mesh.hollow = True
 mesh.canvas = canvas
 mesh._calculateMesh()
 

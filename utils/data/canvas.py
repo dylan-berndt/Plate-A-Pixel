@@ -28,7 +28,10 @@ class Canvas:
         maxScale = 1
         baseImage = image
         xGrid, yGrid = np.meshgrid(np.arange(baseImage.shape[1]), np.arange(baseImage.shape[0]))
-        for i in range(2, 17):
+        for i in range(2, 37):
+            if image.shape[0] // i != image.shape[0] / i or image.shape[1] // i != image.shape[1] / i:
+                continue
+
             if i >= image.shape[0] or i >= image.shape[1]:
                 break
             
@@ -129,7 +132,16 @@ class Canvas:
         else:
             raise NotImplementedError("You Goober")
 
-    def bucketSelect(self, position, mode, contiguous, diagonal):
+    def wandSelect(self, color, mode="replace"):
+        if len(color) == 3:
+            value = max([(range(len(self.palette))[i] if np.all(self.palette[i] == color) else 0) for i in range(len(self.palette))])
+        else:
+            value = color
+        newSelection = self.map == value
+        self.alterSelection(newSelection, mode)
+        return
+
+    def bucketSelect(self, position, contiguous=True, diagonal=False, mode="replace"):
         value = self.map[position]
 
         if not contiguous:
@@ -152,6 +164,9 @@ class Canvas:
             queue = queue[1:]
 
         self.alterSelection(newSelection, mode)
+
+    def transformSelection(self, direction=1):
+        self.layers[self.selection] += direction
 
 
 
