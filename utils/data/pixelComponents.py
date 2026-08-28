@@ -6,9 +6,10 @@ from .vector import *
 # axis - Y-up). Every layer of height is exactly 1 world unit.
 TUBE_MARGIN = 0.2            # how far the tube is inset from the pixel's unit-square edge
 WALL_THICKNESS = 0.1         # shell thickness when a Tube is hollow
-NOTCH_DEPTH = 0.12           # how far a notch pokes past the shared pixel boundary
+NOTCH_DEPTH = 0.06           # how far a notch pokes past the shared pixel boundary
 NOTCH_WIDTH_RATIO = 0.5      # fraction of a face's width a notch/inlet spans, centered
 NOTCH_HEIGHT_RATIO = 0.4     # notch/inlet height as a fraction of the cap's own height
+NOTCH_TOP_MARGIN = 0.2       # gap left above the notch/inlet band, so it isn't flush with the top edge
 BULGE_SIZE = 0.18            # how far a cap flares out past the grid edge on a clear side
 THIN_CONNECTOR_RATIO = 5     # a notch's height drop past this multiple of the tube's width gets flagged
 
@@ -88,7 +89,7 @@ class Notch:
 
     def triangles(self):
         face = self.face
-        topY = float(self.neighborHeight)
+        topY = float(self.neighborHeight) - NOTCH_TOP_MARGIN
         botY = topY - NOTCH_HEIGHT_RATIO
         uA, uB = self.uMid - self.uHalf, self.uMid + self.uHalf
         flush = face.offset(self.boundaryValue, -TUBE_MARGIN)
@@ -125,7 +126,7 @@ class Inlet:
         uMid = (self.u0 + self.u1) / 2.0
         uHalf = (self.u1 - self.u0) * NOTCH_WIDTH_RATIO / 2.0
         uA, uB = uMid - uHalf, uMid + uHalf
-        recessTopY = self.capY1
+        recessTopY = self.capY1 - NOTCH_TOP_MARGIN
         recessBotY = recessTopY - NOTCH_HEIGHT_RATIO
         # Opposite sign from Notch's "tip": the recess goes inward into
         # this pixel's own solid, not outward past the shared boundary.
@@ -135,6 +136,7 @@ class Inlet:
         tris += _faceQuad(face, self.fixedValue, self.u0, uA, self.capY0, self.capY1)              # left flank
         tris += _faceQuad(face, self.fixedValue, uB, self.u1, self.capY0, self.capY1)              # right flank
         tris += _faceQuad(face, self.fixedValue, uA, uB, self.capY0, recessBotY)                    # below the recess
+        tris += _faceQuad(face, self.fixedValue, uA, uB, recessTopY, self.capY1)                    # above the recess
 
         flushA_bot = _facePoint(face, self.fixedValue, uA, recessBotY)
         flushB_bot = _facePoint(face, self.fixedValue, uB, recessBotY)
@@ -181,13 +183,15 @@ class Cap:
 class Collar:
     """The flat frame connecting the cap's (possibly bulged) outer edge to
     the narrower tube directly below it, at their shared seam - without
-    this, a narrower tube meeting a wider cap leaves a gap."""
+    this, a narrower tube meeting a wider cap leaves a gap. Plain-wall
+    sides need no frame at all: their tube already sits flush with the
+    cap above it, so there's no step to close (see Pixel)."""
 
-    def __init__(self, capBounds, tubeBounds, y, openFaces):
+    def __init__(self, capBounds, tubeBounds, y, skipFaces):
         self.capX0, self.capX1, self.capZ0, self.capZ1 = capBounds
         self.tubeX0, self.tubeX1, self.tubeZ0, self.tubeZ1 = tubeBounds
         self.y = y
-        self.openFaces = openFaces
+        self.skipFaces = skipFaces
 
     def triangles(self):
         outer = {
@@ -203,13 +207,13 @@ class Collar:
             return Vector3(pt[0], self.y, pt[1])
 
         tris = []
-        if Face.WEST not in self.openFaces:
+        if Face.WEST not in self.skipFaces:
             tris += _quad(v(outer['nw']), v(outer['sw']), v(inner['sw']), v(inner['nw']))
-        if Face.EAST not in self.openFaces:
+        if Face.EAST not in self.skipFaces:
             tris += _quad(v(outer['ne']), v(inner['ne']), v(inner['se']), v(outer['se']))
-        if Face.NORTH not in self.openFaces:
+        if Face.NORTH not in self.skipFaces:
             tris += _quad(v(outer['nw']), v(inner['nw']), v(inner['ne']), v(outer['ne']))
-        if Face.SOUTH not in self.openFaces:
+        if Face.SOUTH not in self.skipFaces:
             tris += _quad(v(outer['sw']), v(outer['se']), v(inner['se']), v(inner['sw']))
         return tris
 
@@ -269,7 +273,16 @@ class Pixel:
         self.collar = None
         if capY0 > 0:
             m = TUBE_MARGIN
-            tubeBounds = (x0 + m, x1 - m, z0 + m, z1 - m)
+            # Plain-wall sides (same height, different color - no notch/
+            # inlet, no bulge) need no clearance from their neighbor: the
+            # tube sits flush with the grid boundary there instead of
+            # inset, so the two pieces' walls meet directly rather than
+            # each standing alone with a gap between them.
+            tubeX0 = x0 if Face.WEST in plan.plainWalls else x0 + m
+            tubeX1 = x1 if Face.EAST in plan.plainWalls else x1 - m
+            tubeZ0 = z0 if Face.NORTH in plan.plainWalls else z0 + m
+            tubeZ1 = z1 if Face.SOUTH in plan.plainWalls else z1 - m
+            tubeBounds = (tubeX0, tubeX1, tubeZ0, tubeZ1)
 
             notches = []
             for face, neighborHeight in plan.notches.items():
@@ -278,7 +291,8 @@ class Pixel:
                 notches.append(Notch(face, boundaryValue, uMid, uHalf, neighborHeight))
 
             self.tube = Tube(*tubeBounds, capY0, plan.fused, hollow, notches)
-            self.collar = Collar((capX0, capX1, capZ0, capZ1), tubeBounds, capY0, plan.fused)
+            collarSkip = plan.fused | plan.plainWalls
+            self.collar = Collar((capX0, capX1, capZ0, capZ1), tubeBounds, capY0, collarSkip)
 
     def triangles(self):
         tris = list(self.cap.triangles())

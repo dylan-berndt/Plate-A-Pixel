@@ -1,5 +1,8 @@
 from utils.data.pixelPlan import Face, PixelPlan
-from utils.data.pixelComponents import Cap, Collar, Inlet, Notch, Pixel, Tube, NOTCH_DEPTH, TUBE_MARGIN
+from utils.data.pixelComponents import (
+    Cap, Collar, Inlet, Notch, Pixel, Tube,
+    NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN,
+)
 
 
 def test_cap_with_no_open_or_inlet_faces_is_a_closed_box():
@@ -17,14 +20,15 @@ def test_cap_omits_a_fused_face():
     assert len(withFused.triangles()) == len(closed.triangles()) - 6  # one fewer quad
 
 
-def test_notch_protrudes_past_the_boundary_in_the_top_band():
+def test_notch_protrudes_past_the_boundary_below_the_top_margin():
     notch = Notch(Face.EAST, boundaryValue=1.0, uMid=0.5, uHalf=0.25, neighborHeight=2)
 
     verts = notch.triangles()
 
     assert max(v.x for v in verts) == 1.0 + NOTCH_DEPTH
     ys = {round(v.y, 6) for v in verts}
-    assert ys == {2.0 - 0.4, 2.0}  # the notch band is exactly [neighborHeight - 0.4, neighborHeight]
+    expectedTop = 2.0 - NOTCH_TOP_MARGIN
+    assert ys == {expectedTop - NOTCH_HEIGHT_RATIO, expectedTop}
 
 
 def test_notch_flush_end_stays_at_the_tube_wall():
@@ -54,6 +58,19 @@ def test_inlet_recess_never_crosses_into_the_neighbors_cell():
     assert max(v.x for v in verts) == NOTCH_DEPTH
 
 
+def test_inlet_recess_leaves_solid_material_above_it():
+    # The recess band no longer sits flush with the cap's own top edge -
+    # there should be real material between the recess and capY1, both
+    # for strength at the locking point and so it doesn't bite into the
+    # visible top corner.
+    inlet = Inlet(Face.WEST, fixedValue=0.0, u0=0.0, u1=1.0, capY0=0.0, capY1=1.0)
+
+    verts = inlet.triangles()
+
+    assert max(v.y for v in verts) == 1.0
+    assert any(v.y == 1.0 and v.x == 0.0 for v in verts)  # flush material right at the top edge
+
+
 def test_tube_hollow_adds_an_inner_shell():
     solid = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
     hollow = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
@@ -69,8 +86,8 @@ def test_tube_omits_a_fused_face():
 
 
 def test_collar_skips_a_fused_side():
-    full = Collar((0.0, 1.0, 0.0, 1.0), (0.2, 0.8, 0.2, 0.8), y=2.0, openFaces=set())
-    withFused = Collar((0.0, 1.0, 0.0, 1.0), (0.2, 0.8, 0.2, 0.8), y=2.0, openFaces={Face.WEST})
+    full = Collar((0.0, 1.0, 0.0, 1.0), (0.2, 0.8, 0.2, 0.8), y=2.0, skipFaces=set())
+    withFused = Collar((0.0, 1.0, 0.0, 1.0), (0.2, 0.8, 0.2, 0.8), y=2.0, skipFaces={Face.WEST})
 
     assert len(withFused.triangles()) == len(full.triangles()) - 6
 
@@ -84,6 +101,27 @@ def test_pixel_builds_directly_from_a_hand_made_plan_without_a_canvas():
 
     assert len(pixel.triangles()) > 0
     assert pixel.warnings() == []
+
+
+def test_pixel_tube_sits_flush_on_a_plain_wall_side():
+    # EAST has no entry in fused/bulged/notches/inlets, so PixelPlan.plainWalls
+    # picks it up automatically - the tube should extend to the true grid
+    # boundary there (x=1) instead of being inset, so two adjacent same-
+    # height/different-color pieces' tubes meet directly with no gap.
+    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.WEST, Face.SOUTH})
+
+    pixel = Pixel(plan, hollow=False)
+
+    assert pixel.tube.x1 == 1.0
+    assert pixel.tube.x0 == 0.0 + TUBE_MARGIN  # WEST is bulged, not a plain wall - stays inset
+
+
+def test_pixel_collar_omits_the_plain_wall_side_too():
+    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.WEST, Face.SOUTH})
+
+    pixel = Pixel(plan, hollow=False)
+
+    assert Face.EAST in pixel.collar.skipFaces
 
 
 def test_pixel_flags_a_thin_connector():

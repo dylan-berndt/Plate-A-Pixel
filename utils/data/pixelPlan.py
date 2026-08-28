@@ -60,6 +60,13 @@ class PixelPlan:
     def position(self):
         return self.y, self.x
 
+    @property
+    def plainWalls(self):
+        """Sides with a same-height, differently-colored neighbor: no fuse,
+        no bulge, no notch/inlet - just a flat wall, with nothing needing
+        clearance from its neighbor's identical flat wall."""
+        return set(Face) - self.fused - self.bulged - set(self.notches) - set(self.inlets)
+
 
 class PixelPlanner:
     """Reads the canvas and classifies each occupied cell into a

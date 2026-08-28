@@ -70,7 +70,36 @@ def test_plan_same_height_different_color_is_a_plain_wall():
     assert Face.EAST not in blue.fused
     assert Face.EAST not in blue.notches
     assert Face.EAST not in blue.inlets
-    assert Face.EAST not in blue.bulged
+    assert Face.EAST in blue.plainWalls
+
+
+def test_plain_walls_excludes_fused_side():
+    canvas = make_canvas()
+    canvas.layers[0, 0] = 3
+    canvas.layers[0, 1] = 3  # fused, per test_plan_classifies_fused_side
+
+    plan = PixelPlanner(canvas).plan(0, 0)
+
+    assert Face.EAST not in plan.plainWalls
+
+
+def test_plain_walls_excludes_a_notch_side():
+    canvas = make_canvas()
+    canvas.layers[0, 1] = 4  # blue, taller
+    canvas.layers[0, 2] = 2  # red, shorter - blue owns a notch on its east side
+
+    blue = PixelPlanner(canvas).plan(0, 1)
+
+    assert Face.EAST not in blue.plainWalls
+
+
+def test_plain_walls_excludes_a_bulged_side():
+    canvas = make_canvas()
+    canvas.layers[0, 0] = 3  # every side is either off-canvas or unplaced -> all bulged
+
+    plan = PixelPlanner(canvas).plan(0, 0)
+
+    assert plan.plainWalls == set()
 
 
 def test_diagonal_connection_true_when_both_flanking_cells_are_empty():
