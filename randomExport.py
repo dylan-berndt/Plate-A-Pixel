@@ -24,6 +24,7 @@ for c, color in enumerate(canvas.palette):
 mesh = Mesh()
 mesh.hollow = True
 mesh.canvas = canvas
+mesh.hollow = True
 mesh._calculateMesh()
 
 paths = exportMeshObjs(mesh, OUTPUT_DIR)
