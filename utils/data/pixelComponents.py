@@ -4,13 +4,13 @@ from .vector import *
 
 # Axes: X = pixel column, Z = pixel row, Y = height (the vertical/print
 # axis - Y-up). Every layer of height is exactly 1 world unit.
-TUBE_MARGIN = 0.2            # how far the tube is inset from the pixel's unit-square edge
+TUBE_MARGIN = 0.12           # how far the tube is inset from the pixel's unit-square edge
 WALL_THICKNESS = 0.1         # shell thickness when a Tube is hollow
-NOTCH_DEPTH = 0.06           # how far a notch pokes past the shared pixel boundary
-NOTCH_WIDTH_RATIO = 0.5      # fraction of a face's width a notch/inlet spans, centered
-NOTCH_HEIGHT_RATIO = 0.4     # notch/inlet height as a fraction of the cap's own height
+NOTCH_DEPTH = 0.04           # how far a notch pokes past the shared pixel boundary
+NOTCH_WIDTH_RATIO = 0.3      # fraction of a face's width a notch/inlet spans, centered
+NOTCH_HEIGHT_RATIO = 0.2     # notch/inlet height as a fraction of the cap's own height
 NOTCH_TOP_MARGIN = 0.2       # gap left above the notch/inlet band, so it isn't flush with the top edge
-BULGE_SIZE = 0.18            # how far a cap flares out past the grid edge on a clear side
+BULGE_SIZE = 0.10            # how far a cap flares out past the grid edge on a clear side
 THIN_CONNECTOR_RATIO = 5     # a notch's height drop past this multiple of the tube's width gets flagged
 
 
