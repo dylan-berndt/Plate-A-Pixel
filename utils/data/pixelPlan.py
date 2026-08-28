@@ -123,9 +123,12 @@ class PixelPlanner:
                 result.fused.add(face)
             elif nHeight < result.height:
                 result.notches[face] = nHeight
+                result.bulged.add(face)
             elif nHeight > result.height:
                 result.inlets[face] = nHeight
-            # Same height, different color: a plain wall - no entry needed.
+                result.bulged.add(face)
+            # Same height, different color: a plain wall - stays flush
+            # against the matching neighbor, no bulge.
 
         return result
 

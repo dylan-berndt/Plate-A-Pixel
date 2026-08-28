@@ -90,9 +90,14 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     # blue's notch should poke past the shared boundary (x=2) into red's cell
     blueVerts = mesh.meshes[blueIndex][0]
     assert max(v.x for v in blueVerts) > 2.0
-    # red stays within its own cell; the inlet is a recess, not a hole through it
+    # red's cap also bulges toward blue now (no same-height neighbor there),
+    # but BULGE_SIZE stays under TUBE_MARGIN specifically so this can never
+    # reach blue's own (inset) tube - it only ever closes the gap, never
+    # collides with it.
+    from utils.data.pixelComponents import BULGE_SIZE, TUBE_MARGIN
+    assert BULGE_SIZE < TUBE_MARGIN
     redVerts = mesh.meshes[redIndex][0]
-    assert min(v.x for v in redVerts) >= 2.0
+    assert min(v.x for v in redVerts) == 2.0 - BULGE_SIZE
 
 
 def test_diagonal_same_height_pixels_no_longer_bulge_once_the_base_fills_their_flanks(two_color_canvas):
@@ -245,15 +250,20 @@ def test_a_taller_pixel_gets_a_genuine_notch_into_the_base():
 
     from utils.data.pixelComponents import NOTCH_DEPTH
 
+    from utils.data.pixelComponents import BULGE_SIZE
+
     blueIndex = canvas.map[1, 1]
     blueVerts = mesh.meshes[blueIndex][0]
-    # the pixel's notch pokes out past its own cell boundary (x/z in
-    # [1,2]) into the base by exactly NOTCH_DEPTH, on every side - it's
-    # surrounded entirely by (shorter) base cells
-    assert max(v.x for v in blueVerts) == 2.0 + NOTCH_DEPTH
-    assert min(v.x for v in blueVerts) == 1.0 - NOTCH_DEPTH
-    assert max(v.z for v in blueVerts) == 2.0 + NOTCH_DEPTH
-    assert min(v.z for v in blueVerts) == 1.0 - NOTCH_DEPTH
+    # a notch vertex exists exactly NOTCH_DEPTH past the pixel's own cell
+    # boundary (x/z in [1,2]) on its east/south side
+    assert any(v.x == 2.0 + NOTCH_DEPTH for v in blueVerts)
+    # it's surrounded entirely by (shorter) base cells, with no same-height
+    # neighbor anywhere - so the cap itself also bulges on every side,
+    # further out than the notch's own small protrusion
+    assert max(v.x for v in blueVerts) == 2.0 + BULGE_SIZE
+    assert min(v.x for v in blueVerts) == 1.0 - BULGE_SIZE
+    assert max(v.z for v in blueVerts) == 2.0 + BULGE_SIZE
+    assert min(v.z for v in blueVerts) == 1.0 - BULGE_SIZE
 
     baseVerts = [v for comp in mesh.meshes[base_index(canvas)] for v in comp]
     assert len(baseVerts) > 0

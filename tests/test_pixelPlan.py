@@ -30,6 +30,7 @@ def test_plan_classifies_fused_side():
     assert Face.EAST in plan.fused
     assert not plan.notches
     assert not plan.inlets
+    assert Face.EAST not in plan.bulged  # fused sides merge into one continuous surface, no wall to bulge
 
 
 def test_plan_classifies_clear_side_as_bulged():
@@ -53,10 +54,11 @@ def test_plan_classifies_notch_and_inlet_for_a_height_difference():
 
     assert blue.notches[Face.EAST] == 2
     assert Face.EAST not in blue.inlets
-    assert Face.EAST not in blue.bulged
+    assert Face.EAST in blue.bulged  # no same-height neighbor there, so it still bulges
 
     assert red.inlets[Face.WEST] == 4
     assert Face.WEST not in red.notches
+    assert Face.WEST in red.bulged
 
 
 def test_plan_same_height_different_color_is_a_plain_wall():
@@ -71,6 +73,7 @@ def test_plan_same_height_different_color_is_a_plain_wall():
     assert Face.EAST not in blue.notches
     assert Face.EAST not in blue.inlets
     assert Face.EAST in blue.plainWalls
+    assert Face.EAST not in blue.bulged  # must stay flush against the matching neighbor
 
 
 def test_plain_walls_excludes_fused_side():
@@ -100,6 +103,28 @@ def test_plain_walls_excludes_a_bulged_side():
     plan = PixelPlanner(canvas).plan(0, 0)
 
     assert plan.plainWalls == set()
+
+
+def test_bulge_fires_on_every_side_without_a_same_height_neighbor():
+    # The general rule: a side bulges unless a same-height neighbor sits
+    # right against it there - a same-color same-height neighbor fuses
+    # (no separate wall to bulge), a different-color same-height neighbor
+    # is a plain wall (must stay flush against it); every other case -
+    # empty, notch, or inlet - bulges.
+    canvas = make_canvas()
+    canvas.layers[0, 0] = 3               # this pixel
+    canvas.layers[0, 1] = 3               # east: same color, same height -> fused
+    canvas.layers[1, 0] = 3               # south: same height...
+    canvas.map[1, 0] = canvas.map[0, 2]   # ...but a different color -> plain wall
+
+    plan = PixelPlanner(canvas).plan(0, 0)
+
+    assert Face.EAST in plan.fused
+    assert Face.EAST not in plan.bulged                 # fused: no bulge
+    assert Face.SOUTH in plan.plainWalls
+    assert Face.SOUTH not in plan.bulged                # plain wall: no bulge
+    assert Face.WEST in plan.bulged                      # off-canvas: bulge
+    assert Face.NORTH in plan.bulged                     # off-canvas: bulge
 
 
 def test_diagonal_connection_true_when_both_flanking_cells_are_empty():
