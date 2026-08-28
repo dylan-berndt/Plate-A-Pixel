@@ -273,15 +273,18 @@ class Pixel:
         self.collar = None
         if capY0 > 0:
             m = TUBE_MARGIN
-            # Plain-wall sides (same height, different color - no notch/
-            # inlet, no bulge) need no clearance from their neighbor: the
-            # tube sits flush with the grid boundary there instead of
-            # inset, so the two pieces' walls meet directly rather than
-            # each standing alone with a gap between them.
-            tubeX0 = x0 if Face.WEST in plan.plainWalls else x0 + m
-            tubeX1 = x1 if Face.EAST in plan.plainWalls else x1 - m
-            tubeZ0 = z0 if Face.NORTH in plan.plainWalls else z0 + m
-            tubeZ1 = z1 if Face.SOUTH in plan.plainWalls else z1 - m
+            # Fused and plain-wall sides need no clearance from their
+            # neighbor: the tube sits flush with the grid boundary there
+            # instead of inset, so the two tubes' solids actually meet
+            # (fused) or touch (plain wall) rather than each standing
+            # apart with a gap between them - only notch/inlet sides (need
+            # room for the interlock) and bulge sides (need room for the
+            # diagonal-fill trick) stay inset.
+            flush = plan.flushTubeSides
+            tubeX0 = x0 if Face.WEST in flush else x0 + m
+            tubeX1 = x1 if Face.EAST in flush else x1 - m
+            tubeZ0 = z0 if Face.NORTH in flush else z0 + m
+            tubeZ1 = z1 if Face.SOUTH in flush else z1 - m
             tubeBounds = (tubeX0, tubeX1, tubeZ0, tubeZ1)
 
             notches = []
@@ -291,8 +294,7 @@ class Pixel:
                 notches.append(Notch(face, boundaryValue, uMid, uHalf, neighborHeight))
 
             self.tube = Tube(*tubeBounds, capY0, plan.fused, hollow, notches)
-            collarSkip = plan.fused | plan.plainWalls
-            self.collar = Collar((capX0, capX1, capZ0, capZ1), tubeBounds, capY0, collarSkip)
+            self.collar = Collar((capX0, capX1, capZ0, capZ1), tubeBounds, capY0, flush)
 
     def triangles(self):
         tris = list(self.cap.triangles())

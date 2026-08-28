@@ -67,6 +67,15 @@ class PixelPlan:
         clearance from its neighbor's identical flat wall."""
         return set(Face) - self.fused - self.bulged - set(self.notches) - set(self.inlets)
 
+    @property
+    def flushTubeSides(self):
+        """Sides where this pixel's tube should sit flush against the grid
+        boundary instead of inset: fused sides (so the two tubes' solids
+        actually meet and merge, not just have their shared wall omitted
+        with a gap still standing between them) and plain-wall sides (so
+        two separate pieces' tubes touch instead of standing apart)."""
+        return self.fused | self.plainWalls
+
 
 class PixelPlanner:
     """Reads the canvas and classifies each occupied cell into a

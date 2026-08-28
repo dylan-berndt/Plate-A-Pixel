@@ -103,6 +103,17 @@ def test_pixel_builds_directly_from_a_hand_made_plan_without_a_canvas():
     assert pixel.warnings() == []
 
 
+def test_pixel_tube_sits_flush_on_a_fused_side():
+    # This was the actual bug: fused sides omit the *wall*, but the tube's
+    # own cross-section still needs to reach the boundary or the two
+    # tubes' solids never touch even though no wall stands between them.
+    plan = PixelPlan(y=0, x=0, color=0, height=3, fused={Face.EAST}, bulged={Face.NORTH, Face.WEST, Face.SOUTH})
+
+    pixel = Pixel(plan, hollow=False)
+
+    assert pixel.tube.x1 == 1.0
+
+
 def test_pixel_tube_sits_flush_on_a_plain_wall_side():
     # EAST has no entry in fused/bulged/notches/inlets, so PixelPlan.plainWalls
     # picks it up automatically - the tube should extend to the true grid
