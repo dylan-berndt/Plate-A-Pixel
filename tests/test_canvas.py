@@ -25,6 +25,23 @@ def test_from_file_path_round_trip(tmp_path, pixel_art_image):
     assert canvas.image.shape == (6, 6, 3)
 
 
+def test_from_file_path_converts_grayscale_source_to_rgb(tmp_path):
+    # A grayscale PNG loads via PIL as a 2D (H, W) array with no channel
+    # axis at all; detectScale and the rest of Canvas assume 3-channel
+    # (H, W, 3) throughout, so this must be normalized on the way in.
+    gray = np.zeros((20, 20), dtype=np.uint8)
+    gray[:10, :10] = 50
+    gray[:10, 10:] = 150
+    gray[10:, :10] = 200
+    gray[10:, 10:] = 250
+    path = tmp_path / "gray.png"
+    Image.fromarray(gray, mode="L").save(path)
+
+    canvas = Canvas.fromFilePath(str(path))
+
+    assert canvas.image.shape == (2, 2, 3)
+
+
 def test_bucket_select_contiguous_stops_at_color_boundary(canvas):
     canvas.bucketSelect((0, 0), mode="replace", contiguous=True, diagonal=True)
 

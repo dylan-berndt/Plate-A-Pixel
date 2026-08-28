@@ -73,7 +73,10 @@ class Canvas:
 
     @staticmethod
     def fromFilePath(filePath: str):
-        image = np.array(Image.open(filePath))
+        # Force RGB regardless of the source PNG's actual mode (grayscale,
+        # palette-indexed, RGBA, ...) - detectScale and the rest of Canvas
+        # assume a 3-channel (H, W, 3) array throughout.
+        image = np.array(Image.open(filePath).convert("RGB"))
         return Canvas(image)
 
     def positionValid(self, position):
