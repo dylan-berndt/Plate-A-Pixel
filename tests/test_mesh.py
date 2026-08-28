@@ -25,13 +25,23 @@ def total_triangles(mesh):
     return sum(len(component) for components in mesh.meshes for component in components) // 3
 
 
-def test_empty_canvas_produces_no_geometry(two_color_canvas):
+def total_real_triangles(mesh, canvas):
+    # mesh.meshes carries one extra entry past canvas.palette for the base
+    # plate (see Mesh._calculateMesh) - this sums only the real colors.
+    return sum(
+        len(component) for components in mesh.meshes[:len(canvas.palette)] for component in components
+    ) // 3
+
+
+def test_empty_canvas_produces_no_real_pixel_geometry(two_color_canvas):
+    # Nothing placed means every cell becomes base material instead - see
+    # test_base_plate_fills_an_entirely_empty_canvas below - but no real
+    # color should have any geometry of its own.
     mesh = Mesh()
     mesh.canvas = two_color_canvas
     mesh._calculateMesh()
 
-    assert total_triangles(mesh) == 0
-    assert mesh.warnings == []
+    assert total_real_triangles(mesh, two_color_canvas) == 0
 
 
 def test_recompute_is_a_no_op_when_nothing_changed(two_color_canvas):
@@ -85,7 +95,12 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     assert min(v.x for v in redVerts) >= 2.0
 
 
-def test_diagonal_same_height_pixels_bulge_into_one_component(two_color_canvas):
+def test_diagonal_same_height_pixels_no_longer_bulge_once_the_base_fills_their_flanks(two_color_canvas):
+    # This used to bulge into one component (the diagonal-connectivity
+    # rule requires both flanking cells to be genuinely clear) - now that
+    # the base plate always fills empty cells (see Mesh._calculateMesh),
+    # those flanks are occupied instead, so the two pixels stay separate
+    # and each interlocks with the base on its own.
     two_color_canvas.layers[0, 0] = 3
     two_color_canvas.layers[1, 1] = 3  # diagonal from (0, 0), same color/height
 
@@ -94,7 +109,7 @@ def test_diagonal_same_height_pixels_bulge_into_one_component(two_color_canvas):
     mesh._calculateMesh()
 
     blueIndex = two_color_canvas.map[0, 0]
-    assert len(mesh.meshes[blueIndex]) == 1
+    assert len(mesh.meshes[blueIndex]) == 2
 
 
 def test_fully_packed_checkerboard_has_no_bulge_connectivity():
@@ -161,3 +176,102 @@ def test_thin_connector_is_flagged(two_color_canvas):
     mesh._calculateMesh()
 
     assert any("Thin connector" in w for w in mesh.warnings)
+
+
+def base_index(canvas):
+    return len(canvas.palette)
+
+
+def test_base_plate_fills_an_entirely_empty_canvas(two_color_canvas):
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh._calculateMesh()
+
+    assert len(mesh.meshes[base_index(two_color_canvas)]) >= 1
+
+
+def test_base_plate_fills_a_hole_inside_the_canvas(two_color_canvas):
+    # Every cell around this single placed pixel is a "hole" - the base
+    # should fill all of them, with zero margin needed for that.
+    two_color_canvas.layers[0, 0] = 3
+
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh.baseMargin = 0
+    mesh._calculateMesh()
+
+    assert len(mesh.meshes[base_index(two_color_canvas)]) >= 1
+
+
+def test_base_plate_margin_extends_past_the_canvas_edge():
+    img = np.zeros((3, 3, 3), dtype=np.uint8)
+    img[:] = (30, 30, 200)
+    canvas = Canvas(img)
+    canvas.layers[:] = -1
+    canvas.layers[1, 1] = 3
+
+    withoutMargin = Mesh()
+    withoutMargin.canvas = canvas
+    withoutMargin.baseMargin = 0
+    withoutMargin._calculateMesh()
+
+    withMargin = Mesh()
+    withMargin.canvas = canvas
+    withMargin.baseMargin = 2
+    withMargin._calculateMesh()
+
+    def base_extent(mesh):
+        verts = [v for comp in mesh.meshes[base_index(canvas)] for v in comp]
+        return max(v.x for v in verts) - min(v.x for v in verts)
+
+    assert base_extent(withMargin) > base_extent(withoutMargin)
+
+
+def test_a_taller_pixel_gets_a_genuine_notch_into_the_base():
+    # The whole point: no separate mechanism for this - a real pixel taller
+    # than the base (height 1) sitting next to it goes through exactly the
+    # same notch/inlet classification as two differently-colored pixels of
+    # different heights always have.
+    img = np.zeros((3, 3, 3), dtype=np.uint8)
+    img[:] = (30, 30, 200)
+    canvas = Canvas(img)
+    canvas.layers[:] = -1
+    canvas.layers[1, 1] = 3
+
+    mesh = Mesh()
+    mesh.canvas = canvas
+    mesh.baseMargin = 0
+    mesh._calculateMesh()
+
+    from utils.data.pixelComponents import NOTCH_DEPTH
+
+    blueIndex = canvas.map[1, 1]
+    blueVerts = mesh.meshes[blueIndex][0]
+    # the pixel's notch pokes out past its own cell boundary (x/z in
+    # [1,2]) into the base by exactly NOTCH_DEPTH, on every side - it's
+    # surrounded entirely by (shorter) base cells
+    assert max(v.x for v in blueVerts) == 2.0 + NOTCH_DEPTH
+    assert min(v.x for v in blueVerts) == 1.0 - NOTCH_DEPTH
+    assert max(v.z for v in blueVerts) == 2.0 + NOTCH_DEPTH
+    assert min(v.z for v in blueVerts) == 1.0 - NOTCH_DEPTH
+
+    baseVerts = [v for comp in mesh.meshes[base_index(canvas)] for v in comp]
+    assert len(baseVerts) > 0
+
+
+def test_base_cells_fuse_with_each_other_around_a_hole():
+    img = np.zeros((3, 3, 3), dtype=np.uint8)
+    img[:] = (30, 30, 200)
+    canvas = Canvas(img)
+    canvas.layers[:] = -1
+    canvas.layers[1, 1] = 3  # a single occupied pixel surrounded entirely by holes
+
+    mesh = Mesh()
+    mesh.canvas = canvas
+    mesh.baseMargin = 0
+    mesh._calculateMesh()
+
+    # every other cell in the 3x3 grid is base - it should all fuse into
+    # one connected ring around the occupied center, not stay as 8 separate
+    # single-cell pieces
+    assert len(mesh.meshes[base_index(canvas)]) == 1

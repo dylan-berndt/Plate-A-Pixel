@@ -12,6 +12,24 @@ _ELBOW_PAIRS = [
     (Face.SOUTH, Face.EAST), (Face.SOUTH, Face.WEST),
 ]
 
+BASE_HEIGHT = 1
+
+
+class _GridView:
+    """The bare minimum PixelPlanner needs (.map, .layers, .positionValid)
+    to run over a plain array instead of an actual Canvas - lets the base
+    plate reuse PixelPlanner/Pixel completely unchanged (see
+    Mesh._calculateMesh) instead of needing its own classification path."""
+
+    def __init__(self, map_, layers):
+        self.map = map_
+        self.layers = layers
+
+    def positionValid(self, position):
+        y, x = position
+        rows, cols = self.map.shape
+        return 0 <= y < rows and 0 <= x < cols
+
 
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
@@ -25,15 +43,23 @@ class Mesh:
         self.canvas: Canvas = None
 
         self.hollow = False
+        # How many grid cells the base plate extends past the canvas's own
+        # row/column extent on every side - 0 still fills every hole
+        # inside the canvas, just without a border past its edge.
+        self.baseMargin = 0
 
         self.mapCache: np.array = None
         self.layerCache: np.array = None
         self.hollowCache = self.hollow
+        self.baseMarginCache = self.baseMargin
 
         # meshes[colorIndex] is a list of components - pixels of the same
         # color don't always end up physically connected (see the
         # "disconnected parts" warnings below); each component is a flat
-        # list of Vector3, 3 per triangle.
+        # list of Vector3, 3 per triangle. The base plate isn't a color in
+        # canvas.palette - it's appended as one extra entry past the real
+        # colors (see _calculateMesh), so it comes back as just another
+        # mesh, same as any color's.
         self.meshes = []
         self.warnings = []
 
@@ -52,7 +78,8 @@ class Mesh:
             or not np.array_equal(self.layerCache, self.canvas.layers)
         )
         hollowChanged = self.hollow != self.hollowCache
-        return mapChanged or layersChanged or hollowChanged
+        baseMarginChanged = self.baseMargin != self.baseMarginCache
+        return mapChanged or layersChanged or hollowChanged or baseMarginChanged
 
     def _calculateMesh(self):
         if not self._checkForUpdate():
@@ -61,10 +88,33 @@ class Mesh:
         self.mapCache = self.canvas.map.copy()
         self.layerCache = self.canvas.layers.copy()
         self.hollowCache = self.hollow
+        self.baseMarginCache = self.baseMargin
         self.warnings = []
 
-        planner = PixelPlanner(self.canvas)
-        rows, cols = self.canvas.map.shape
+        canvasRows, canvasCols = self.canvas.map.shape
+        margin = self.baseMargin
+        rows, cols = canvasRows + 2 * margin, canvasCols + 2 * margin
+
+        # The base color: one past every real palette color, so it never
+        # collides with an actual color index.
+        baseColor = len(self.canvas.palette)
+        gridMap = np.full((rows, cols), baseColor, dtype=self.canvas.map.dtype)
+        gridLayers = np.full((rows, cols), -1, dtype=self.canvas.layers.dtype)
+        gridMap[margin:margin + canvasRows, margin:margin + canvasCols] = self.canvas.map
+        gridLayers[margin:margin + canvasRows, margin:margin + canvasCols] = self.canvas.layers
+
+        # Every cell still empty at this point - a hole inside the canvas,
+        # or anywhere in the margin border - becomes base material:
+        # literally another color, at height 1, run through the exact same
+        # PixelPlanner/Pixel pipeline as everything else. A real pixel
+        # taller than it gets a completely ordinary notch into it, and the
+        # base cells fuse with each other exactly like any same-color
+        # same-height neighbors always do.
+        emptyMask = gridLayers < 1
+        gridMap[emptyMask] = baseColor
+        gridLayers[emptyMask] = BASE_HEIGHT
+
+        planner = PixelPlanner(_GridView(gridMap, gridLayers))
 
         pixels = {}
         parent = {}
@@ -129,7 +179,7 @@ class Mesh:
             componentPixelCount[key] = componentPixelCount.get(key, 0) + 1
             self.warnings.extend(pixel.warnings())
 
-        colorCount = len(self.canvas.palette)
+        colorCount = len(self.canvas.palette) + 1  # +1 for the base color
         meshes = [[] for _ in range(colorCount)]
         perColorRoots = {}
         for (color, root), tris in components.items():
