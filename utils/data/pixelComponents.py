@@ -259,13 +259,12 @@ def _tubeBoundary(tube, face):
 def cornerFillTriangles(pixelA, pixelB, mainFace, perpFace):
     """Two pixels fused on their shared mainFace side can still disagree
     on a *perpendicular* side's margin - e.g. A is also fused north
-    (flush) while B's own north side is bulged (inset). Their tubes then
-    meet flush along the shared seam but step apart on the perpendicular
-    one, leaving an L-shaped notch right at the corner even though
-    they're the same physical piece. This bridges just that notch with a
-    small, margin-width patch anchored at the seam - not the full width
-    of the inset pixel, which would make that whole side read as a
-    thicker wall than the rest of the tube."""
+    (flush) while B's own north side is bulged (inset). Both walls
+    already end at the exact same seam coordinate (that's what fused
+    means), so nothing needs to get wider - they just stop at different
+    heights on the other axis. This is the one missing quad connecting
+    the flush wall's end directly to the inset wall's start, right at
+    the seam - not a box, just that single connector face."""
     aFlush = perpFace in pixelA.plan.flushTubeSides
     bFlush = perpFace in pixelB.plan.flushTubeSides
     if aFlush == bFlush:
@@ -277,16 +276,10 @@ def cornerFillTriangles(pixelA, pixelB, mainFace, perpFace):
     lo, hi = sorted((flushVal, insetVal))
     y1 = insetPixel.tube.y1
 
-    # The edge of insetPixel actually touching the shared seam, and one
-    # tube-margin's width inward from it - not insetPixel's full extent.
     nearFace = mainFace.opposite if insetPixel is pixelB else mainFace
     seamValue = _tubeBoundary(insetPixel.tube, nearFace)
-    bridgeValue = nearFace.offset(seamValue, -TUBE_MARGIN)
-    alongLo, alongHi = sorted((seamValue, bridgeValue))
 
-    if perpFace.axis == 'z':
-        return _box((alongLo, 0.0, lo), (alongHi, y1, hi))
-    return _box((lo, 0.0, alongLo), (hi, y1, alongHi))
+    return _faceQuad(nearFace, seamValue, lo, hi, 0.0, y1)
 
 
 class Pixel:
