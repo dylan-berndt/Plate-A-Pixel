@@ -254,19 +254,30 @@ class Tube:
             tris += notch.triangles()
         return tris
 
-    def _wallBox(self, face):
+    def _wallBox(self, face, u0=None, u1=None):
         """A solid slab standing in for `face`'s wall: its outer face is
         exactly that wall (so it lines up with whatever's flush against
         it), thickened inward by WALL_THICKNESS - never outward past the
-        tube's own boundary. No shared cavity, just one box per wall."""
+        tube's own boundary. No shared cavity, just one box per wall.
+
+        u0/u1 override the wall's own span along its length - used to
+        extend a wall past its own footprint to meet another pixel's wall
+        at a shared elbow corner (see _wallExtension), so the extension
+        is built by the same box construction as the rest of the wall
+        and gets the same thickness, floor and ceiling, rather than being
+        a separate flat patch bolted on afterwards."""
         outer = _tubeBoundary(self, face)
         inner = face.offset(outer, -WALL_THICKNESS)
+        if u0 is None:
+            u0, u1 = (self.z0, self.z1) if face.axis == 'x' else (self.x0, self.x1)
+        else:
+            u0, u1 = sorted((u0, u1))
         if face.axis == 'x':
             x0, x1 = sorted((outer, inner))
-            z0, z1 = self.z0, self.z1
+            z0, z1 = u0, u1
         else:
             z0, z1 = sorted((outer, inner))
-            x0, x1 = self.x0, self.x1
+            x0, x1 = u0, u1
         if x1 <= x0 or z1 <= z0:
             return []
         # Fully closed on its own, top and bottom included: the cap's own
@@ -293,12 +304,19 @@ def _wallExtension(pixel, wallFace, seamValue, targetValue):
     """A longer version of `pixel`'s own wallFace wall: same plane, same
     orientation, its u-range just widened from its current flush end
     (seamValue) out to targetValue. Not a new face in a different plane -
-    literally that wall, extended."""
+    literally that wall, extended. When the tube is hollow this goes
+    through Tube._wallBox like the rest of the wall, so the extension is
+    reinforced (thickness, floor, ceiling) the same way; a solid tube's
+    wall is already fully filled material, so a flat quad is enough to
+    extend its skin."""
     if seamValue == targetValue:
         return []
-    fixedValue = _tubeBoundary(pixel.tube, wallFace)
+    tube = pixel.tube
+    if tube.hollow:
+        return tube._wallBox(wallFace, seamValue, targetValue)
+    fixedValue = _tubeBoundary(tube, wallFace)
     u0, u1 = sorted((seamValue, targetValue))
-    return _faceQuad(wallFace, fixedValue, u0, u1, 0.0, pixel.tube.y1)
+    return _faceQuad(wallFace, fixedValue, u0, u1, 0.0, tube.y1)
 
 
 def elbowWallExtensions(P, Q, f1, f2):

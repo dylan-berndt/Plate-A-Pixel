@@ -224,6 +224,27 @@ def test_elbow_wall_extensions_meet_inside_the_elbow_pixel():
     assert {v.x for v in qExtension} == {Q.tube.x0, P.tube.x1}  # extends exactly to P's east wall
 
 
+def test_elbow_wall_extensions_are_reinforced_boxes_when_hollow():
+    # Same corner as above, but with hollow tubes: the extension should
+    # go through the same per-wall box construction as the rest of the
+    # wall (floor, ceiling, WALL_THICKNESS) instead of being a bare flat
+    # quad with none of that reinforcement.
+    planP = PixelPlan(y=0, x=1, color=0, height=3, fused={Face.SOUTH}, bulged={Face.NORTH, Face.WEST, Face.EAST})
+    planQ = PixelPlan(y=1, x=2, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
+    P = Pixel(planP, hollow=True)
+    Q = Pixel(planQ, hollow=True)
+
+    fill = elbowWallExtensions(P, Q, Face.NORTH, Face.EAST)
+
+    pExtension, qExtension = fill[:36], fill[36:]
+    assert len(fill) == 72  # two full closed boxes (6 quads each), 2 triangles each
+
+    pXs = {v.x for v in pExtension}
+    assert pXs == {P.tube.x1, P.tube.x1 - WALL_THICKNESS}  # thickened inward, same as a normal wall
+    assert {v.z for v in pExtension} == {P.tube.z1, Q.tube.z0}  # still extends exactly to Q's north wall
+    assert any(v.y == 0.0 for v in pExtension) and any(v.y == P.tube.y1 for v in pExtension)  # floor and ceiling present
+
+
 def test_elbow_wall_extensions_empty_when_sides_are_already_flush():
     # If P's own east side (and Q's own north side) are already flush
     # rather than bulged, there's no wall to extend.
