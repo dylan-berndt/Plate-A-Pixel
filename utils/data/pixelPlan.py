@@ -38,6 +38,16 @@ class Face(Enum):
         normal (a negative amount shifts inward instead)."""
         return value + self.sign * amount
 
+    @property
+    def opposite(self):
+        return _OPPOSITE_FACE[self]
+
+
+_OPPOSITE_FACE = {
+    Face.EAST: Face.WEST, Face.WEST: Face.EAST,
+    Face.SOUTH: Face.NORTH, Face.NORTH: Face.SOUTH,
+}
+
 
 @dataclass
 class PixelPlan:

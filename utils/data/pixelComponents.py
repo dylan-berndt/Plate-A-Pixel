@@ -256,15 +256,16 @@ def _tubeBoundary(tube, face):
     return tube.x1  # Face.EAST
 
 
-def cornerFillTriangles(pixelA, pixelB, perpFace):
-    """Two pixels fused on a shared side can still disagree on a
-    *perpendicular* side's margin - e.g. A is also fused north (flush)
-    while B's own north side is bulged (inset). Their tubes then meet
-    flush along the shared seam but step apart on the perpendicular one,
-    leaving an L-shaped notch right at the corner even though they're the
-    same physical piece. This patches that notch with a small box sized
-    to the more-inset pixel's own footprint, filling it up to its flush
-    neighbor's boundary."""
+def cornerFillTriangles(pixelA, pixelB, mainFace, perpFace):
+    """Two pixels fused on their shared mainFace side can still disagree
+    on a *perpendicular* side's margin - e.g. A is also fused north
+    (flush) while B's own north side is bulged (inset). Their tubes then
+    meet flush along the shared seam but step apart on the perpendicular
+    one, leaving an L-shaped notch right at the corner even though
+    they're the same physical piece. This bridges just that notch with a
+    small, margin-width patch anchored at the seam - not the full width
+    of the inset pixel, which would make that whole side read as a
+    thicker wall than the rest of the tube."""
     aFlush = perpFace in pixelA.plan.flushTubeSides
     bFlush = perpFace in pixelB.plan.flushTubeSides
     if aFlush == bFlush:
@@ -276,9 +277,16 @@ def cornerFillTriangles(pixelA, pixelB, perpFace):
     lo, hi = sorted((flushVal, insetVal))
     y1 = insetPixel.tube.y1
 
+    # The edge of insetPixel actually touching the shared seam, and one
+    # tube-margin's width inward from it - not insetPixel's full extent.
+    nearFace = mainFace.opposite if insetPixel is pixelB else mainFace
+    seamValue = _tubeBoundary(insetPixel.tube, nearFace)
+    bridgeValue = nearFace.offset(seamValue, -TUBE_MARGIN)
+    alongLo, alongHi = sorted((seamValue, bridgeValue))
+
     if perpFace.axis == 'z':
-        return _box((insetPixel.tube.x0, 0.0, lo), (insetPixel.tube.x1, y1, hi))
-    return _box((lo, 0.0, insetPixel.tube.z0), (hi, y1, insetPixel.tube.z1))
+        return _box((alongLo, 0.0, lo), (alongHi, y1, hi))
+    return _box((lo, 0.0, alongLo), (hi, y1, alongHi))
 
 
 class Pixel:

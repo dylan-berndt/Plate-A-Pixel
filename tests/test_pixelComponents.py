@@ -136,24 +136,25 @@ def test_pixel_collar_omits_the_plain_wall_side_too():
     assert Face.EAST in pixel.collar.skipFaces
 
 
-def test_corner_fill_patches_a_fused_pairs_perpendicular_mismatch():
+def test_corner_fill_bridges_only_a_margin_width_not_the_full_pixel():
     # A is fused EAST (to B) and NORTH (to some third pixel, flush there);
     # B is only fused WEST, so its own north side is bulged/inset. Even
     # though A and B are the same connected piece, their tubes disagree
     # on where the north wall sits - this is the corner notch from the
-    # picture, and the patch should fill exactly that region.
+    # picture. The fix should bridge just the seam, not extend B's whole
+    # north wall out to flush (which would read as an oddly thick wall).
     planA = PixelPlan(y=1, x=1, color=0, height=3, fused={Face.EAST, Face.NORTH}, bulged={Face.WEST, Face.SOUTH})
     planB = PixelPlan(y=1, x=2, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
     pixelA = Pixel(planA, hollow=False)
     pixelB = Pixel(planB, hollow=False)
 
-    fill = cornerFillTriangles(pixelA, pixelB, Face.NORTH)
+    fill = cornerFillTriangles(pixelA, pixelB, Face.EAST, Face.NORTH)
 
     assert len(fill) > 0
     zs = {v.z for v in fill}
     assert zs == {pixelA.tube.z0, pixelB.tube.z0}  # spans exactly the mismatched gap
     xs = {v.x for v in fill}
-    assert xs == {pixelB.tube.x0, pixelB.tube.x1}  # sized to the inset (B's own) footprint
+    assert xs == {pixelB.tube.x0, pixelB.tube.x0 + TUBE_MARGIN}  # a margin-width bridge at the seam, not B's full width
 
 
 def test_corner_fill_is_empty_when_sides_already_agree():
@@ -162,7 +163,7 @@ def test_corner_fill_is_empty_when_sides_already_agree():
     pixelA = Pixel(planA, hollow=False)
     pixelB = Pixel(planB, hollow=False)
 
-    assert cornerFillTriangles(pixelA, pixelB, Face.NORTH) == []
+    assert cornerFillTriangles(pixelA, pixelB, Face.EAST, Face.NORTH) == []
 
 
 def test_pixel_flags_a_thin_connector():

@@ -106,7 +106,7 @@ class Mesh:
                 if neighborPixel is None or not neighborPixel.tube:
                     continue
                 for perpFace in perpFaces:
-                    fill = cornerFillTriangles(pixel, neighborPixel, perpFace)
+                    fill = cornerFillTriangles(pixel, neighborPixel, mainFace, perpFace)
                     if fill:
                         cornerFills.setdefault((y, x), []).extend(fill)
 
