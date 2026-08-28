@@ -1,8 +1,8 @@
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import (
     Cap, Collar, Inlet, Notch, Pixel, Tube,
-    elbowWallExtensions,
-    NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN,
+    elbowWallExtensions, bulgeSeamPatch,
+    BULGE_SIZE, NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN, WALL_THICKNESS,
 )
 
 
@@ -11,7 +11,17 @@ def test_cap_with_no_open_or_inlet_faces_is_a_closed_box():
 
     tris = cap.triangles()
 
-    assert len(tris) == 30  # 4 side quads + 1 top quad, 2 triangles each = 10 triangles
+    assert len(tris) == 36  # 4 side quads + top + bottom, 2 triangles each = 12 triangles
+
+
+def test_cap_bottom_face_mirrors_the_top_so_the_cap_is_watertight_alone():
+    cap = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set(), inlets=[])
+
+    tris = cap.triangles()
+    triangles = [tris[i:i + 3] for i in range(0, len(tris), 3)]
+    bottomTriangles = [tri for tri in triangles if all(v.y == 0.0 for v in tri)]
+
+    assert len(bottomTriangles) == 2  # a full bottom quad, split into 2 triangles
 
 
 def test_cap_omits_a_fused_face():
@@ -72,11 +82,37 @@ def test_inlet_recess_leaves_solid_material_above_it():
     assert any(v.y == 1.0 and v.x == 0.0 for v in verts)  # flush material right at the top edge
 
 
-def test_tube_hollow_adds_an_inner_shell():
+def test_tube_hollow_adds_more_geometry_than_a_solid_tube():
     solid = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
     hollow = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
 
     assert len(hollow.triangles()) > len(solid.triangles())
+
+
+def test_tube_hollow_wall_never_crosses_past_the_tubes_own_boundary():
+    # A NORTH wall's box must stay within the tube's own footprint -
+    # thickened inward (toward larger z) only, never sticking out past
+    # z0 into whatever sits beyond the tube.
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+
+    northWall = tube._wallBox(Face.NORTH)
+
+    assert min(v.z for v in northWall) == tube.z0            # outer face sits exactly at the wall
+    assert max(v.z for v in northWall) == tube.z0 + WALL_THICKNESS  # thickened inward (southward), not outward
+    assert {v.x for v in northWall} == {tube.x0, tube.x1}    # spans the tube's own width, no more
+
+
+def test_tube_hollow_walls_of_two_adjacent_sides_meet_with_no_gap_at_the_corner():
+    # Distinct per-wall boxes (not a shared cavity) - NORTH and WEST should
+    # still overlap/meet cleanly at their shared corner instead of leaving
+    # a gap there.
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+
+    north = tube._wallBox(Face.NORTH)
+    west = tube._wallBox(Face.WEST)
+
+    assert min(v.x for v in north) <= tube.x0  # north wall reaches at least to the west wall's outer face
+    assert min(v.z for v in west) <= tube.z0   # west wall reaches at least to the north wall's outer face
 
 
 def test_tube_omits_a_fused_face():
@@ -169,6 +205,34 @@ def test_elbow_wall_extensions_empty_when_sides_are_already_flush():
     Q = Pixel(planQ, hollow=False)
 
     assert elbowWallExtensions(P, Q, Face.NORTH, Face.EAST) == []
+
+
+def test_bulge_seam_patch_closes_the_step_between_a_bulged_and_flush_cap():
+    # Q=(0,0) and P=(0,1) are fused along the shared EAST/WEST seam. P also
+    # bulges NORTH (nothing north of it); Q does not (something's there).
+    # Their north edges no longer line up, so the sliver of P's west face
+    # north of Q's own cap edge - up to P's own bulged edge - needs a wall.
+    planQ = PixelPlan(y=0, x=0, color=0, height=3, fused={Face.EAST}, bulged={Face.WEST, Face.SOUTH})
+    planP = PixelPlan(y=0, x=1, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
+    Q = Pixel(planQ, hollow=False)
+    P = Pixel(planP, hollow=False)
+
+    patch = bulgeSeamPatch(P, Q, Face.WEST)
+
+    assert len(patch) == 6  # one quad, 2 triangles
+    assert {v.x for v in patch} == {P.cap.x0}          # stays in P's own west-face plane
+    assert {v.z for v in patch} == {P.cap.z0, Q.cap.z0}  # spans exactly the bulge overhang
+    assert P.cap.z0 == 0.0 - BULGE_SIZE
+    assert Q.cap.z0 == 0.0
+
+
+def test_bulge_seam_patch_empty_when_both_sides_bulge_the_same_way():
+    planQ = PixelPlan(y=0, x=0, color=0, height=3, fused={Face.EAST}, bulged={Face.WEST, Face.NORTH, Face.SOUTH})
+    planP = PixelPlan(y=0, x=1, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
+    Q = Pixel(planQ, hollow=False)
+    P = Pixel(planP, hollow=False)
+
+    assert bulgeSeamPatch(P, Q, Face.WEST) == []
 
 
 def test_pixel_flags_a_thin_connector():

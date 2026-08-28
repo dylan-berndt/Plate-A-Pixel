@@ -177,6 +177,13 @@ class Cap:
             Vector3(self.x0, self.y1, self.z0), Vector3(self.x1, self.y1, self.z0),
             Vector3(self.x1, self.y1, self.z1), Vector3(self.x0, self.y1, self.z1),
         )
+        # The same face, copied down to y0 and wound the other way round so
+        # it faces down instead of up - without it the cap is an open shell
+        # on its underside, relying on whatever sits below to close it.
+        tris += _quad(
+            Vector3(self.x0, self.y0, self.z1), Vector3(self.x1, self.y0, self.z1),
+            Vector3(self.x1, self.y0, self.z0), Vector3(self.x0, self.y0, self.z0),
+        )
         return tris
 
 
@@ -233,17 +240,36 @@ class Tube:
 
     def triangles(self):
         skip = {face.boxKey for face in self.openFaces} | {'+y', '-y'}
-        tris = _box((self.x0, 0.0, self.z0), (self.x1, self.y1, self.z1), skip=skip)
 
         if self.hollow:
-            w = WALL_THICKNESS
-            ix0, iz0, ix1, iz1 = self.x0 + w, self.z0 + w, self.x1 - w, self.z1 - w
-            if ix1 > ix0 and iz1 > iz0:
-                tris += _box((ix0, 0.0, iz0), (ix1, self.y1, iz1), skip=skip)
+            tris = []
+            for face in Face:
+                if face.boxKey in skip:
+                    continue
+                tris += self._wallBox(face)
+        else:
+            tris = _box((self.x0, 0.0, self.z0), (self.x1, self.y1, self.z1), skip=skip)
 
         for notch in self.notches:
             tris += notch.triangles()
         return tris
+
+    def _wallBox(self, face):
+        """A solid slab standing in for `face`'s wall: its outer face is
+        exactly that wall (so it lines up with whatever's flush against
+        it), thickened inward by WALL_THICKNESS - never outward past the
+        tube's own boundary. No shared cavity, just one box per wall."""
+        outer = _tubeBoundary(self, face)
+        inner = face.offset(outer, -WALL_THICKNESS)
+        if face.axis == 'x':
+            x0, x1 = sorted((outer, inner))
+            z0, z1 = self.z0, self.z1
+        else:
+            z0, z1 = sorted((outer, inner))
+            x0, x1 = self.x0, self.x1
+        if x1 <= x0 or z1 <= z0:
+            return []
+        return _box((x0, 0.0, z0), (x1, self.y1, z1), skip={'+y', '-y'})
 
 
 def _tubeBoundary(tube, face):
@@ -286,6 +312,42 @@ def elbowWallExtensions(P, Q, f1, f2):
         seamQ = _tubeBoundary(Q.tube, f2.opposite)
         targetQ = _tubeBoundary(P.tube, f2)
         tris += _wallExtension(Q, f1, seamQ, targetQ)
+    return tris
+
+
+_PERPENDICULARS = {
+    Face.WEST: (Face.NORTH, Face.SOUTH), Face.EAST: (Face.NORTH, Face.SOUTH),
+    Face.NORTH: (Face.WEST, Face.EAST), Face.SOUTH: (Face.WEST, Face.EAST),
+}
+
+
+def _capBoundary(pixel, face):
+    if face is Face.NORTH:
+        return pixel.cap.z0
+    if face is Face.SOUTH:
+        return pixel.cap.z1
+    if face is Face.WEST:
+        return pixel.cap.x0
+    return pixel.cap.x1  # Face.EAST
+
+
+def bulgeSeamPatch(pixel, neighbor, fusedFace):
+    """`pixel` is fused to `neighbor` across fusedFace, so its own cap wall
+    there is skipped entirely - the two caps are assumed to line up and
+    merge into one continuous surface. That assumption breaks when
+    `pixel` bulges on a side perpendicular to fusedFace and `neighbor`
+    doesn't bulge the same way: `pixel`'s cap then reaches further along
+    that edge than `neighbor`'s does, and the sliver in between - past
+    `neighbor`'s edge, up to `pixel`'s own bulged edge - has no wall at
+    all. Patch just that sliver, on `pixel`'s own face, in its own
+    plane."""
+    tris = []
+    fixedValue = _capBoundary(pixel, fusedFace)
+    for perpendicular in _PERPENDICULARS[fusedFace]:
+        if perpendicular not in pixel.plan.bulged or perpendicular in neighbor.plan.bulged:
+            continue
+        u0, u1 = sorted((_capBoundary(neighbor, perpendicular), _capBoundary(pixel, perpendicular)))
+        tris += _faceQuad(fusedFace, fixedValue, u0, u1, pixel.cap.y0, pixel.cap.y1)
     return tris
 
 

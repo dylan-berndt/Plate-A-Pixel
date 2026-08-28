@@ -1,7 +1,7 @@
 import numpy as np
 from .canvas import *
 from .pixelPlan import Face, PixelPlanner
-from .pixelComponents import Pixel, elbowWallExtensions
+from .pixelComponents import Pixel, elbowWallExtensions, bulgeSeamPatch
 
 # The four ways a pixel can be fused to two perpendicular neighbors at
 # once - each pairing identifies one "elbow": the pixel itself, plus the
@@ -88,7 +88,7 @@ class Mesh:
                 pixels[(y, x)] = Pixel(plan, self.hollow)
                 parent[(y, x)] = (y, x)
 
-        cornerFills = {}
+        extraTriangles = {}
         for (y, x), pixel in pixels.items():
             for face in Face:
                 if face in pixel.plan.fused:
@@ -96,6 +96,16 @@ class Mesh:
             for neighbor, connected in planner.diagonalConnections(y, x):
                 if connected:
                     union((y, x), neighbor)
+
+            for face in Face:
+                if face not in pixel.plan.fused:
+                    continue
+                neighborPixel = pixels.get(face.neighbor(y, x))
+                if neighborPixel is None:
+                    continue
+                patch = bulgeSeamPatch(pixel, neighborPixel, face)
+                if patch:
+                    extraTriangles.setdefault((y, x), []).extend(patch)
 
             if not pixel.tube:
                 continue
@@ -108,14 +118,14 @@ class Mesh:
                     continue
                 fill = elbowWallExtensions(P, Q, f1, f2)
                 if fill:
-                    cornerFills.setdefault((y, x), []).extend(fill)
+                    extraTriangles.setdefault((y, x), []).extend(fill)
 
         components = {}
         componentPixelCount = {}
         for pos, pixel in pixels.items():
             key = (pixel.plan.color, find(pos))
             components.setdefault(key, []).extend(pixel.triangles())
-            components[key].extend(cornerFills.get(pos, []))
+            components[key].extend(extraTriangles.get(pos, []))
             componentPixelCount[key] = componentPixelCount.get(key, 0) + 1
             self.warnings.extend(pixel.warnings())
 
