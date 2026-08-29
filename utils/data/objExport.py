@@ -14,19 +14,39 @@ def writeObj(triangles, path):
             f.write(f"f {i + 1} {i + 2} {i + 3}\n")
 
 
-def exportMeshObjs(mesh, outputDir, baseName="pixelart"):
+def _colorFolderName(rgb):
+    """A name built directly from an RGB triple, e.g. (30, 30, 200) ->
+    "30_30_200" - so a part's path names its own color outright, instead
+    of a numeric index whose meaning shifts as the palette's size
+    changes between exports (see Mesh._calculateMesh: the base plate's
+    color index is always len(palette), one past the last real color -
+    stable within a single export, but not across two exports with
+    different palette sizes)."""
+    return "_".join(str(int(c)) for c in rgb)
+
+
+def exportMeshObjs(mesh, outputDir):
     """Write one OBJ file per disconnected component in mesh.meshes (a
     color rarely ends up as a single physically connected piece - see
-    Mesh.warnings). Returns the list of file paths written."""
+    Mesh.warnings), one subfolder per real palette color named after its
+    own RGB value, plus a separate "base" subfolder for the base plate
+    (mesh.meshes' last entry - see Mesh._calculateMesh) so it can never
+    be confused with a real color's own folder. Returns the list of file
+    paths written."""
     os.makedirs(outputDir, exist_ok=True)
 
     paths = []
+    palette = mesh.canvas.palette
     for colorIndex, components in enumerate(mesh.meshes):
+        folderName = _colorFolderName(palette[colorIndex]) if colorIndex < len(palette) else "base"
+        colorDir = os.path.join(outputDir, folderName)
+
         for partIndex, triangles in enumerate(components):
             if not triangles:
                 continue
-            filename = f"{baseName}_color{colorIndex}_part{partIndex}.obj"
-            path = os.path.join(outputDir, filename)
+            os.makedirs(colorDir, exist_ok=True)
+            filename = f"{folderName}_part{partIndex}.obj"
+            path = os.path.join(colorDir, filename)
             writeObj(triangles, path)
             paths.append(path)
     return paths
