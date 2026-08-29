@@ -28,7 +28,7 @@ class Canvas:
         maxScale = 1
         baseImage = image
         xGrid, yGrid = np.meshgrid(np.arange(baseImage.shape[1]), np.arange(baseImage.shape[0]))
-        for i in range(2, 37):
+        for i in range(2, 101):
             if image.shape[0] // i != image.shape[0] / i or image.shape[1] // i != image.shape[1] / i:
                 continue
 
