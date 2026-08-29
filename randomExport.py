@@ -20,7 +20,11 @@ print(canvas.scale)
 
 for c, color in enumerate(canvas.palette):
     canvas.wandSelect(color)
-    canvas.transformSelection(c)
+    # layers starts at -1 (empty) and transformSelection adds to it, so
+    # +c alone leaves color 0 at -1 and color 1 at 0 - both still "empty"
+    # (height < 1) and silently absorbed into the base plate. +2 makes
+    # color c land at height c+1, the first real height.
+    canvas.transformSelection(c + 2)
 
 mesh = Mesh()
 mesh.canvas = canvas
