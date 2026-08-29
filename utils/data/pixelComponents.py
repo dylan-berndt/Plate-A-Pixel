@@ -62,7 +62,19 @@ def _faceQuad(face: Face, fixedValue, u0, u1, y0, y1):
     p10 = _facePoint(face, fixedValue, u1, y0)
     p11 = _facePoint(face, fixedValue, u1, y1)
     p01 = _facePoint(face, fixedValue, u0, y1)
-    if face.sign > 0:
+    # _facePoint maps u to z for x-axis faces but to x for z-axis faces -
+    # swapping which physical axis u/fixedValue land on is itself
+    # orientation-reversing (right-handed x,y,z), so the same sign check
+    # that picks the correct winding for EAST/WEST picks the wrong one for
+    # NORTH/SOUTH unless it's inverted here. Was a real bug, not just a
+    # cosmetic one: it made every NORTH/SOUTH quad from this helper (Cap
+    # walls, Inlet flanks, wall extensions, ...) wind opposite to the
+    # EAST/WEST ones and to _box()'s own convention, leaving genuinely
+    # closed seams between them flagged as non-manifold.
+    forward = face.sign > 0
+    if face.axis == 'z':
+        forward = not forward
+    if forward:
         return _quad(p00, p10, p11, p01)
     return _quad(p10, p00, p01, p11)
 
@@ -145,9 +157,22 @@ class Inlet:
         flushA_top = _facePoint(face, self.fixedValue, uA, recessTopY)
         flushB_top = _facePoint(face, self.fixedValue, uB, recessTopY)
 
-        tris += _quad(flushA_bot, flushB_bot, recB_top, recA_top)   # the recess floor (ramp)
-        tris += [flushA_bot, flushA_top, recA_top]                   # end wall at uA
-        tris += [flushB_bot, recB_top, flushB_top]                   # end wall at uB
+        # Same axis-vs-sign story as _faceQuad (see its own comment): these
+        # three pieces meet each other at real edges (the ramp's two ends
+        # against the two end walls), so their winding has to flip
+        # together as a set whenever this effective sign does, not each
+        # independently, and not by raw face.sign alone.
+        forward = face.sign > 0
+        if face.axis == 'z':
+            forward = not forward
+        if forward:
+            tris += _quad(flushA_bot, flushB_bot, recB_top, recA_top)   # the recess floor (ramp)
+            tris += [flushA_bot, recA_top, flushA_top]                   # end wall at uA
+            tris += [flushB_bot, flushB_top, recB_top]                   # end wall at uB
+        else:
+            tris += _quad(recA_top, recB_top, flushB_bot, flushA_bot)   # the recess floor (ramp)
+            tris += [flushA_bot, flushA_top, recA_top]                   # end wall at uA
+            tris += [flushB_bot, recB_top, flushB_top]                   # end wall at uB
         return tris
 
 
@@ -156,11 +181,28 @@ class Cap:
     outward on any clear (bulged) side, with an Inlet cut into any side
     facing a taller neighbor, and simply omitted on any fused side."""
 
-    def __init__(self, x0, x1, z0, z1, y0, y1, openFaces, inlets):
+    def __init__(self, x0, x1, z0, z1, y0, y1, openFaces, inlets, floorBounds=None):
         self.x0, self.x1, self.z0, self.z1 = x0, x1, z0, z1
         self.y0, self.y1 = y0, y1
         self.openFaces = openFaces
         self.inlets = {inlet.face: inlet for inlet in inlets}
+        # The underside quad below closes over exactly this rectangle:
+        # - None (default, no Tube below): the cap's own full footprint -
+        #   nothing else is going to close it, so it's fully self-contained.
+        # - False (a solid Tube below): omitted entirely. A solid tube is
+        #   real material all the way from the print bed up to here, so
+        #   there's no actual boundary between it and the cap above it in
+        #   the tube's own footprint - drawing a floor there would be a
+        #   redundant internal wall sealed inside solid material, not a
+        #   real surface. The ring outside the tube's footprint is still a
+        #   real boundary (air below, cap above) - that's the Collar's job.
+        # - a (x0, x1, z0, z1) tuple (a hollow Tube below): the tube's own
+        #   footprint, to seal its hollow cavity's open top - a real
+        #   surface this time, since there's genuinely air below it.
+        self.drawFloor = floorBounds is not False
+        self.floorX0, self.floorX1, self.floorZ0, self.floorZ1 = (
+            (x0, x1, z0, z1) if not floorBounds else floorBounds
+        )
 
     def triangles(self):
         tris = []
@@ -177,22 +219,29 @@ class Cap:
             Vector3(self.x0, self.y1, self.z0), Vector3(self.x1, self.y1, self.z0),
             Vector3(self.x1, self.y1, self.z1), Vector3(self.x0, self.y1, self.z1),
         )
-        # The same face, copied down to y0 and wound the other way round so
-        # it faces down instead of up - without it the cap is an open shell
-        # on its underside, relying on whatever sits below to close it.
+        if not self.drawFloor:
+            return tris
+        # The underside, wound the other way round so it faces down instead
+        # of up - without it the cap is an open shell on its underside,
+        # relying on whatever sits below to close it. Only spans floorBounds
+        # (see __init__), not the full footprint, so it doesn't re-cover the
+        # ring a Collar already handles.
         tris += _quad(
-            Vector3(self.x0, self.y0, self.z1), Vector3(self.x1, self.y0, self.z1),
-            Vector3(self.x1, self.y0, self.z0), Vector3(self.x0, self.y0, self.z0),
+            Vector3(self.floorX0, self.y0, self.floorZ1), Vector3(self.floorX1, self.y0, self.floorZ1),
+            Vector3(self.floorX1, self.y0, self.floorZ0), Vector3(self.floorX0, self.y0, self.floorZ0),
         )
         return tris
 
 
 class Collar:
     """The flat frame connecting the cap's (possibly bulged) outer edge to
-    the narrower tube directly below it, at their shared seam - without
-    this, a narrower tube meeting a wider cap leaves a gap. Plain-wall
-    sides need no frame at all: their tube already sits flush with the
-    cap above it, so there's no step to close (see Pixel)."""
+    the narrower tube directly below it, at their shared seam. The cap's
+    own underside only closes over the tube's footprint (see Cap), so this
+    ring - between that and the cap's actual outer edge - is the only
+    thing that closes it; without this, a narrower tube meeting a wider
+    cap leaves a gap. Plain-wall sides need no frame at all: their tube
+    already sits flush with the cap above it, so there's no step to close
+    (see Pixel)."""
 
     def __init__(self, capBounds, tubeBounds, y, skipFaces):
         self.capX0, self.capX1, self.capZ0, self.capZ1 = capBounds
@@ -239,16 +288,22 @@ class Tube:
         self.notches = notches
 
     def triangles(self):
-        skip = {face.boxKey for face in self.openFaces} | {'+y', '-y'}
+        sideSkip = {face.boxKey for face in self.openFaces}
 
         if self.hollow:
             tris = []
             for face in Face:
-                if face.boxKey in skip:
+                if face.boxKey in sideSkip:
                     continue
                 tris += self._wallBox(face)
         else:
-            tris = _box((self.x0, 0.0, self.z0), (self.x1, self.y1, self.z1), skip=skip)
+            # Top is covered by the cap's own downward-facing bottom quad
+            # (see Cap.triangles) so it's skipped here same as the hollow
+            # case above - but unlike a hollow wall's own box (each of
+            # which closes itself off at the print bed, see _wallBox), a
+            # solid tube's box was never given its own floor, leaving every
+            # solid part open on its underside.
+            tris = _box((self.x0, 0.0, self.z0), (self.x1, self.y1, self.z1), skip=sideSkip | {'+y'})
 
         for notch in self.notches:
             tris += notch.triangles()
@@ -397,10 +452,7 @@ class Pixel:
             fixedValue, u0, u1 = _faceRange(face, capX0, capZ0, capX1, capZ1)
             inlets.append(Inlet(face, fixedValue, u0, u1, capY0, capY1))
 
-        self.cap = Cap(capX0, capX1, capZ0, capZ1, capY0, capY1, plan.fused, inlets)
-
-        self.tube = None
-        self.collar = None
+        tubeBounds = None
         if capY0 > 0:
             m = TUBE_MARGIN
             # Fused and plain-wall sides need no clearance from their
@@ -417,6 +469,21 @@ class Pixel:
             tubeZ1 = z1 if Face.SOUTH in flush else z1 - m
             tubeBounds = (tubeX0, tubeX1, tubeZ0, tubeZ1)
 
+        # A tube below narrows (hollow) or entirely removes (solid - real,
+        # continuous material already, no boundary to draw) what the cap's
+        # own underside needs to close (see Cap.__init__) - the ring
+        # outside that is the Collar's job either way.
+        if tubeBounds is None:
+            floorBounds = None
+        elif hollow:
+            floorBounds = tubeBounds
+        else:
+            floorBounds = False
+        self.cap = Cap(capX0, capX1, capZ0, capZ1, capY0, capY1, plan.fused, inlets, floorBounds=floorBounds)
+
+        self.tube = None
+        self.collar = None
+        if tubeBounds is not None:
             notches = []
             for face, neighborHeight in plan.notches.items():
                 boundaryValue, u0, u1 = _faceRange(face, x0, z0, x1, z1)

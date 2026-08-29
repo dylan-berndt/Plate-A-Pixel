@@ -1,9 +1,28 @@
+from collections import Counter
+
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import (
     Cap, Collar, Inlet, Notch, Pixel, Tube,
     elbowWallExtensions, bulgeSeamPatch,
     BULGE_SIZE, NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN, WALL_THICKNESS,
 )
+
+
+def _edgeDirectionCounts(triangles):
+    """For every undirected edge in `triangles`, how many triangles use it
+    and in which direction - the same edge used twice in the *same*
+    direction means two faces meeting there are wound inconsistently, not
+    just duplicated (a real 2-manifold edge is used by exactly one
+    triangle each way)."""
+    def key(v):
+        return (round(v.x, 6), round(v.y, 6), round(v.z, 6))
+
+    directed = Counter()
+    for i in range(0, len(triangles), 3):
+        tri = triangles[i:i + 3]
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            directed[(key(tri[a]), key(tri[b]))] += 1
+    return directed
 
 
 def test_cap_with_no_open_or_inlet_faces_is_a_closed_box():
@@ -123,6 +142,19 @@ def test_tube_hollow_wall_has_a_floor_at_the_print_bed():
 
     northWall = tube._wallBox(Face.NORTH)
     triangles = [northWall[i:i + 3] for i in range(0, len(northWall), 3)]
+    floorTriangles = [tri for tri in triangles if all(v.y == 0.0 for v in tri)]
+
+    assert len(floorTriangles) == 2  # a full floor quad, split into 2 triangles
+
+
+def test_tube_solid_has_a_floor_at_the_print_bed():
+    # Same bug as the hollow wall above, but for the solid box itself: it
+    # used to skip both its top (fair, the cap's own underside covers it)
+    # and its bottom - leaving every solid tube open on its underside with
+    # no floor at all.
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
+
+    triangles = [tube.triangles()[i:i + 3] for i in range(0, len(tube.triangles()), 3)]
     floorTriangles = [tri for tri in triangles if all(v.y == 0.0 for v in tri)]
 
     assert len(floorTriangles) == 2  # a full floor quad, split into 2 triangles
@@ -290,3 +322,49 @@ def test_pixel_flags_a_thin_connector():
     pixel = Pixel(plan, hollow=False)
 
     assert any("Thin connector" in w for w in pixel.warnings())
+
+
+def test_solid_pixel_with_clear_sides_has_no_duplicate_or_inconsistently_wound_edges():
+    # A solid pixel bulged on every side (no neighbors at all) should be a
+    # single, cleanly closed shell: every edge shared by exactly one
+    # triangle in each direction. This was the actual bug behind a lot of
+    # the "non-manifold edge" reports - _faceQuad wound NORTH/SOUTH quads
+    # opposite to EAST/WEST and to _box() (see _faceQuad), and the Cap's
+    # own underside redundantly re-covered the same ring the Collar
+    # already closes (see Cap.__init__) - both fixed at the source rather
+    # than patched after the fact.
+    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST})
+    pixel = Pixel(plan, hollow=False)
+
+    directed = _edgeDirectionCounts(pixel.triangles())
+
+    assert all(count == 1 for count in directed.values())
+
+
+def test_solid_fused_pair_has_no_duplicate_or_inconsistently_wound_edges():
+    # Same check as above, across a real seam between two fused pixels
+    # (not just one pixel's own internal geometry).
+    planA = PixelPlan(y=0, x=0, color=0, height=3, fused={Face.EAST}, bulged={Face.NORTH, Face.WEST, Face.SOUTH})
+    planB = PixelPlan(y=0, x=1, color=0, height=3, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH})
+    A = Pixel(planA, hollow=False)
+    B = Pixel(planB, hollow=False)
+
+    directed = _edgeDirectionCounts(A.triangles() + B.triangles())
+
+    assert all(count == 1 for count in directed.values())
+
+
+def test_inlet_winding_is_consistent_on_every_side():
+    # The recess ramp and its two end walls meet each other at real edges
+    # regardless of which side the inlet faces - each of the 4 sides swaps
+    # between two different axes and signs (see Face), and the fix has to
+    # hold for all of them, not just the one side it was first noticed on.
+    for face in (Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST):
+        others = {Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST} - {face}
+        plan = PixelPlan(y=0, x=0, color=0, height=3, inlets={face: 5}, bulged=others)
+        pixel = Pixel(plan, hollow=False)
+
+        directed = _edgeDirectionCounts(pixel.triangles())
+        badEdges = {edge: count for edge, count in directed.items() if count > 1}
+
+        assert badEdges == {}, f"{face} produced inconsistently wound edges: {badEdges}"
