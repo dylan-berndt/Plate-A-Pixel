@@ -2,7 +2,7 @@ import numpy as np
 
 from utils.data.canvas import Canvas
 from utils.data.mesh import Mesh
-from utils.data.objExport import exportMeshObjs, writeObj
+from utils.data.objExport import exportMeshObjs, writeObj, MM_PER_UNIT
 from utils.data.vector import Vector3
 
 
@@ -94,6 +94,30 @@ def test_export_mesh_objs_puts_the_base_plate_in_its_own_folder_never_a_color_fo
     assert any(p.endswith("base_part0.obj") for p in paths)
     # never named after a color, and never sharing a folder with one
     assert not any("30_30_200" in p and "base" in p for p in paths)
+
+
+def _vertexLines(path):
+    return [l for l in path.read_text().splitlines() if l.startswith("v ")]
+
+
+def test_write_obj_scales_coordinates_to_millimeters_by_default(tmp_path):
+    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]
+    path = tmp_path / "tri.obj"
+
+    writeObj(triangles, str(path))
+
+    coords = [float(tok) for tok in _vertexLines(path)[1].split()[1:]]  # the (1,0,0) vertex
+    assert coords == [MM_PER_UNIT, 0.0, 0.0]
+
+
+def test_write_obj_scale_is_overridable(tmp_path):
+    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]
+    path = tmp_path / "tri.obj"
+
+    writeObj(triangles, str(path), scale=2.0)
+
+    coords = [float(tok) for tok in _vertexLines(path)[1].split()[1:]]  # the (1,0,0) vertex
+    assert coords == [2.0, 0.0, 0.0]
 
 
 def test_export_mesh_objs_skips_empty_components(tmp_path):
