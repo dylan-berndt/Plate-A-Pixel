@@ -2,6 +2,7 @@ import numpy as np
 from .canvas import *
 from .pixelPlan import Face, PixelPlanner
 from .pixelComponents import Pixel, elbowWallExtensions, bulgeSeamPatch
+from .meshRepair import repairTJunctions
 
 # The four ways a pixel can be fused to two perpendicular neighbors at
 # once - each pairing identifies one "elbow": the pixel itself, plus the
@@ -183,7 +184,13 @@ class Mesh:
         meshes = [[] for _ in range(colorCount)]
         perColorRoots = {}
         for (color, root), tris in components.items():
-            meshes[color].append(tris)
+            # Independently-built neighboring pieces (a fused pair with
+            # different bulge extents along their seam, say) can fully
+            # cover the same area without triangulating it the same way -
+            # closing those seams edge-for-edge here is what a strict
+            # manifold check (and most slicers) actually require, not
+            # just visual coverage.
+            meshes[color].append(repairTJunctions(tris))
             perColorRoots.setdefault(color, []).append(root)
 
         for color, roots in perColorRoots.items():
