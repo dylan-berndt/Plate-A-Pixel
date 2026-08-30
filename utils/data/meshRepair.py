@@ -10,9 +10,9 @@ def _roundedKey(v):
 
 def _flatPlane(tri):
     """Which single coordinate is constant across all 3 corners of `tri`
-    (its own axis-aligned plane), or None if it's a tilted face (a
-    Notch/Inlet ramp, say) - those are left alone; T-junctions on them
-    are rare and not worth the extra complexity here."""
+    (its own axis-aligned plane), or None if it's a tilted face - all of
+    this codebase's geometry is axis-aligned, but a tilted face would be
+    left alone rather than mishandled."""
     for axis in _AXES:
         values = {round(getattr(v, axis), 6) for v in tri}
         if len(values) == 1:

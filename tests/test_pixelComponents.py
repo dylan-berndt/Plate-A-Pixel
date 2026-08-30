@@ -2,9 +2,9 @@ from collections import Counter
 
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import (
-    Cap, Collar, Inlet, Notch, Pixel, Tube,
+    Cap, Collar, Pixel, Tube,
     elbowWallExtensions, bulgeSeamPatch,
-    BULGE_SIZE, NOTCH_DEPTH, NOTCH_HEIGHT_RATIO, NOTCH_TOP_MARGIN, TUBE_MARGIN, WALL_THICKNESS,
+    BULGE_SIZE, TUBE_MARGIN, WALL_THICKNESS,
 )
 
 
@@ -25,8 +25,8 @@ def _edgeDirectionCounts(triangles):
     return directed
 
 
-def test_cap_with_no_open_or_inlet_faces_is_a_closed_box():
-    cap = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set(), inlets=[])
+def test_cap_with_no_open_faces_is_a_closed_box():
+    cap = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set())
 
     tris = cap.triangles()
 
@@ -34,7 +34,7 @@ def test_cap_with_no_open_or_inlet_faces_is_a_closed_box():
 
 
 def test_cap_bottom_face_mirrors_the_top_so_the_cap_is_watertight_alone():
-    cap = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set(), inlets=[])
+    cap = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set())
 
     tris = cap.triangles()
     triangles = [tris[i:i + 3] for i in range(0, len(tris), 3)]
@@ -44,66 +44,15 @@ def test_cap_bottom_face_mirrors_the_top_so_the_cap_is_watertight_alone():
 
 
 def test_cap_omits_a_fused_face():
-    closed = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set(), inlets=[])
-    withFused = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces={Face.EAST}, inlets=[])
+    closed = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces=set())
+    withFused = Cap(x0=0.0, x1=1.0, z0=0.0, z1=1.0, y0=0.0, y1=1.0, openFaces={Face.EAST})
 
     assert len(withFused.triangles()) == len(closed.triangles()) - 6  # one fewer quad
 
 
-def test_notch_protrudes_past_the_boundary_below_the_top_margin():
-    notch = Notch(Face.EAST, boundaryValue=1.0, uMid=0.5, uHalf=0.25, neighborHeight=2)
-
-    verts = notch.triangles()
-
-    assert max(v.x for v in verts) == 1.0 + NOTCH_DEPTH
-    ys = {round(v.y, 6) for v in verts}
-    expectedTop = 2.0 - NOTCH_TOP_MARGIN
-    assert ys == {expectedTop - NOTCH_HEIGHT_RATIO, expectedTop}
-
-
-def test_notch_flush_end_stays_at_the_tube_wall():
-    notch = Notch(Face.EAST, boundaryValue=1.0, uMid=0.5, uHalf=0.25, neighborHeight=2)
-
-    verts = notch.triangles()
-
-    assert min(v.x for v in verts) == 1.0 - TUBE_MARGIN
-
-
-def test_notch_is_thin_only_past_the_configured_ratio():
-    shallow = Notch(Face.EAST, boundaryValue=1.0, uMid=0.5, uHalf=0.25, neighborHeight=2)
-    steep = Notch(Face.EAST, boundaryValue=1.0, uMid=0.5, uHalf=0.25, neighborHeight=2)
-
-    assert shallow.isThinRelativeTo(ownHeight=3) is False
-    assert steep.isThinRelativeTo(ownHeight=20) is True
-
-
-def test_inlet_recess_never_crosses_into_the_neighbors_cell():
-    # A WEST-facing inlet belongs to a pixel whose solid occupies x >= 0;
-    # the recess must stay on that side (x >= 0), never going negative.
-    inlet = Inlet(Face.WEST, fixedValue=0.0, u0=0.0, u1=1.0, capY0=0.0, capY1=1.0)
-
-    verts = inlet.triangles()
-
-    assert min(v.x for v in verts) >= 0.0
-    assert max(v.x for v in verts) == NOTCH_DEPTH
-
-
-def test_inlet_recess_leaves_solid_material_above_it():
-    # The recess band no longer sits flush with the cap's own top edge -
-    # there should be real material between the recess and capY1, both
-    # for strength at the locking point and so it doesn't bite into the
-    # visible top corner.
-    inlet = Inlet(Face.WEST, fixedValue=0.0, u0=0.0, u1=1.0, capY0=0.0, capY1=1.0)
-
-    verts = inlet.triangles()
-
-    assert max(v.y for v in verts) == 1.0
-    assert any(v.y == 1.0 and v.x == 0.0 for v in verts)  # flush material right at the top edge
-
-
 def test_tube_hollow_adds_more_geometry_than_a_solid_tube():
-    solid = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
-    hollow = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+    solid = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False)
+    hollow = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True)
 
     assert len(hollow.triangles()) > len(solid.triangles())
 
@@ -112,7 +61,7 @@ def test_tube_hollow_wall_never_crosses_past_the_tubes_own_boundary():
     # A NORTH wall's box must stay within the tube's own footprint -
     # thickened inward (toward larger z) only, never sticking out past
     # z0 into whatever sits beyond the tube.
-    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True)
 
     northWall = tube._wallBox(Face.NORTH)
 
@@ -125,7 +74,7 @@ def test_tube_hollow_walls_of_two_adjacent_sides_meet_with_no_gap_at_the_corner(
     # Distinct per-wall boxes (not a shared cavity) - NORTH and WEST should
     # still overlap/meet cleanly at their shared corner instead of leaving
     # a gap there.
-    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True)
 
     north = tube._wallBox(Face.NORTH)
     west = tube._wallBox(Face.WEST)
@@ -138,7 +87,7 @@ def test_tube_hollow_wall_has_a_floor_at_the_print_bed():
     # Nothing sits below y=0 - without a floor of its own, this box is an
     # open tube with a bare, zero-thickness rim right where it meets the
     # print bed.
-    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True)
 
     northWall = tube._wallBox(Face.NORTH)
     triangles = [northWall[i:i + 3] for i in range(0, len(northWall), 3)]
@@ -152,7 +101,7 @@ def test_tube_solid_has_a_floor_at_the_print_bed():
     # used to skip both its top (fair, the cap's own underside covers it)
     # and its bottom - leaving every solid tube open on its underside with
     # no floor at all.
-    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False)
 
     triangles = [tube.triangles()[i:i + 3] for i in range(0, len(tube.triangles()), 3)]
     floorTriangles = [tri for tri in triangles if all(v.y == 0.0 for v in tri)]
@@ -165,7 +114,7 @@ def test_tube_hollow_wall_is_a_fully_closed_box_on_its_own():
     # floor, a matching ceiling too, so this box doesn't depend on lining
     # up edge-for-edge with the cap's own (separately triangulated) bottom
     # face to actually be watertight.
-    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True, notches=[])
+    tube = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=True)
 
     northWall = tube._wallBox(Face.NORTH)
     triangles = [northWall[i:i + 3] for i in range(0, len(northWall), 3)]
@@ -176,8 +125,8 @@ def test_tube_hollow_wall_is_a_fully_closed_box_on_its_own():
 
 
 def test_tube_omits_a_fused_face():
-    closed = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False, notches=[])
-    withFused = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces={Face.EAST}, hollow=False, notches=[])
+    closed = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces=set(), hollow=False)
+    withFused = Tube(x0=0.2, x1=0.8, z0=0.2, z1=0.8, y1=3.0, openFaces={Face.EAST}, hollow=False)
 
     assert len(withFused.triangles()) < len(closed.triangles())
 
@@ -212,8 +161,8 @@ def test_pixel_tube_sits_flush_on_a_fused_side():
 
 
 def test_pixel_tube_sits_flush_on_a_plain_wall_side():
-    # EAST has no entry in fused/bulged/notches/inlets, so PixelPlan.plainWalls
-    # picks it up automatically - the tube should extend to the true grid
+    # EAST has no entry in fused/bulged, so PixelPlan.plainWalls picks it
+    # up automatically - the tube should extend to the true grid
     # boundary there (x=1) instead of being inset, so two adjacent same-
     # height/different-color pieces' tubes meet directly with no gap.
     plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.WEST, Face.SOUTH})
@@ -316,14 +265,6 @@ def test_bulge_seam_patch_empty_when_both_sides_bulge_the_same_way():
     assert bulgeSeamPatch(P, Q, Face.WEST) == []
 
 
-def test_pixel_flags_a_thin_connector():
-    plan = PixelPlan(y=0, x=0, color=0, height=20, notches={Face.EAST: 2})
-
-    pixel = Pixel(plan, hollow=False)
-
-    assert any("Thin connector" in w for w in pixel.warnings())
-
-
 def test_solid_pixel_with_clear_sides_has_no_duplicate_or_inconsistently_wound_edges():
     # A solid pixel bulged on every side (no neighbors at all) should be a
     # single, cleanly closed shell: every edge shared by exactly one
@@ -352,19 +293,3 @@ def test_solid_fused_pair_has_no_duplicate_or_inconsistently_wound_edges():
     directed = _edgeDirectionCounts(A.triangles() + B.triangles())
 
     assert all(count == 1 for count in directed.values())
-
-
-def test_inlet_winding_is_consistent_on_every_side():
-    # The recess ramp and its two end walls meet each other at real edges
-    # regardless of which side the inlet faces - each of the 4 sides swaps
-    # between two different axes and signs (see Face), and the fix has to
-    # hold for all of them, not just the one side it was first noticed on.
-    for face in (Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST):
-        others = {Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST} - {face}
-        plan = PixelPlan(y=0, x=0, color=0, height=3, inlets={face: 5}, bulged=others)
-        pixel = Pixel(plan, hollow=False)
-
-        directed = _edgeDirectionCounts(pixel.triangles())
-        badEdges = {edge: count for edge, count in directed.items() if count > 1}
-
-        assert badEdges == {}, f"{face} produced inconsistently wound edges: {badEdges}"

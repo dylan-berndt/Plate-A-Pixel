@@ -6,12 +6,7 @@ from .vector import *
 # axis - Y-up). Every layer of height is exactly 1 world unit.
 TUBE_MARGIN = 0.12           # how far the tube is inset from the pixel's unit-square edge
 WALL_THICKNESS = 0.1         # shell thickness when a Tube is hollow
-NOTCH_DEPTH = 0.04           # how far a notch pokes past the shared pixel boundary
-NOTCH_WIDTH_RATIO = 0.3      # fraction of a face's width a notch/inlet spans, centered
-NOTCH_HEIGHT_RATIO = 0.2     # notch/inlet height as a fraction of the cap's own height
-NOTCH_TOP_MARGIN = 0.2       # gap left above the notch/inlet band, so it isn't flush with the top edge
 BULGE_SIZE = 0.10            # how far a cap flares out past the grid edge on a clear side
-THIN_CONNECTOR_RATIO = 5     # a notch's height drop past this multiple of the tube's width gets flagged
 
 
 def _quad(a, b, c, d):
@@ -68,9 +63,9 @@ def _faceQuad(face: Face, fixedValue, u0, u1, y0, y1):
     # that picks the correct winding for EAST/WEST picks the wrong one for
     # NORTH/SOUTH unless it's inverted here. Was a real bug, not just a
     # cosmetic one: it made every NORTH/SOUTH quad from this helper (Cap
-    # walls, Inlet flanks, wall extensions, ...) wind opposite to the
-    # EAST/WEST ones and to _box()'s own convention, leaving genuinely
-    # closed seams between them flagged as non-manifold.
+    # walls, wall extensions, ...) wind opposite to the EAST/WEST ones and
+    # to _box()'s own convention, leaving genuinely closed seams between
+    # them flagged as non-manifold.
     forward = face.sign > 0
     if face.axis == 'z':
         forward = not forward
@@ -79,113 +74,15 @@ def _faceQuad(face: Face, fixedValue, u0, u1, y0, y1):
     return _quad(p10, p00, p01, p11)
 
 
-class Notch:
-    """A wedge tab on a tube's face, in the top NOTCH_HEIGHT_RATIO of the
-    shorter neighbor's cap band: flush (no protrusion) at the bottom of
-    that band, ramping up to full protrusion past the shared boundary at
-    the top, with a flat top shelf. Pressed straight down, the ramp cams
-    the tab past the matching Inlet; the flat shelf is what then holds it
-    seated - a plain box wouldn't allow that motion at all."""
-
-    def __init__(self, face: Face, boundaryValue: float, uMid: float, uHalf: float, neighborHeight: int):
-        self.face = face
-        self.boundaryValue = boundaryValue
-        self.uMid = uMid
-        self.uHalf = uHalf
-        self.neighborHeight = neighborHeight
-
-    def isThinRelativeTo(self, ownHeight):
-        drop = ownHeight - self.neighborHeight
-        tubeWidth = 1.0 - 2 * TUBE_MARGIN
-        return tubeWidth > 0 and drop / tubeWidth > THIN_CONNECTOR_RATIO
-
-    def triangles(self):
-        face = self.face
-        topY = float(self.neighborHeight) - NOTCH_TOP_MARGIN
-        botY = topY - NOTCH_HEIGHT_RATIO
-        uA, uB = self.uMid - self.uHalf, self.uMid + self.uHalf
-        flush = face.offset(self.boundaryValue, -TUBE_MARGIN)
-        tip = face.offset(self.boundaryValue, NOTCH_DEPTH)
-
-        flushA_bot = _facePoint(face, flush, uA, botY)
-        flushB_bot = _facePoint(face, flush, uB, botY)
-        flushA_top = _facePoint(face, flush, uA, topY)
-        flushB_top = _facePoint(face, flush, uB, topY)
-        tipA_top = _facePoint(face, tip, uA, topY)
-        tipB_top = _facePoint(face, tip, uB, topY)
-
-        tris = []
-        tris += _quad(flushA_bot, flushB_bot, tipB_top, tipA_top)   # the ramp
-        tris += _quad(flushA_top, tipA_top, tipB_top, flushB_top)   # the flat top shelf
-        tris += [flushA_bot, tipA_top, flushA_top]                   # end cap at uA
-        tris += [flushB_bot, flushB_top, tipB_top]                   # end cap at uB
-        return tris
-
-
-class Inlet:
-    """The matching cavity on a cap's own face, carved as the mirror of a
-    Notch: flush at the bottom of its band, receding inward to full depth
-    at the top, closed off above by the cap's own top face."""
-
-    def __init__(self, face: Face, fixedValue: float, u0: float, u1: float, capY0: float, capY1: float):
-        self.face = face
-        self.fixedValue = fixedValue
-        self.u0, self.u1 = u0, u1
-        self.capY0, self.capY1 = capY0, capY1
-
-    def triangles(self):
-        face = self.face
-        uMid = (self.u0 + self.u1) / 2.0
-        uHalf = (self.u1 - self.u0) * NOTCH_WIDTH_RATIO / 2.0
-        uA, uB = uMid - uHalf, uMid + uHalf
-        recessTopY = self.capY1 - NOTCH_TOP_MARGIN
-        recessBotY = recessTopY - NOTCH_HEIGHT_RATIO
-        # Opposite sign from Notch's "tip": the recess goes inward into
-        # this pixel's own solid, not outward past the shared boundary.
-        recessed = face.offset(self.fixedValue, -NOTCH_DEPTH)
-
-        tris = []
-        tris += _faceQuad(face, self.fixedValue, self.u0, uA, self.capY0, self.capY1)              # left flank
-        tris += _faceQuad(face, self.fixedValue, uB, self.u1, self.capY0, self.capY1)              # right flank
-        tris += _faceQuad(face, self.fixedValue, uA, uB, self.capY0, recessBotY)                    # below the recess
-        tris += _faceQuad(face, self.fixedValue, uA, uB, recessTopY, self.capY1)                    # above the recess
-
-        flushA_bot = _facePoint(face, self.fixedValue, uA, recessBotY)
-        flushB_bot = _facePoint(face, self.fixedValue, uB, recessBotY)
-        recA_top = _facePoint(face, recessed, uA, recessTopY)
-        recB_top = _facePoint(face, recessed, uB, recessTopY)
-        flushA_top = _facePoint(face, self.fixedValue, uA, recessTopY)
-        flushB_top = _facePoint(face, self.fixedValue, uB, recessTopY)
-
-        # Same axis-vs-sign story as _faceQuad (see its own comment): these
-        # three pieces meet each other at real edges (the ramp's two ends
-        # against the two end walls), so their winding has to flip
-        # together as a set whenever this effective sign does, not each
-        # independently, and not by raw face.sign alone.
-        forward = face.sign > 0
-        if face.axis == 'z':
-            forward = not forward
-        if forward:
-            tris += _quad(flushA_bot, flushB_bot, recB_top, recA_top)   # the recess floor (ramp)
-            tris += [flushA_bot, recA_top, flushA_top]                   # end wall at uA
-            tris += [flushB_bot, flushB_top, recB_top]                   # end wall at uB
-        else:
-            tris += _quad(recA_top, recB_top, flushB_bot, flushA_bot)   # the recess floor (ramp)
-            tris += [flushA_bot, flushA_top, recA_top]                   # end wall at uA
-            tris += [flushB_bot, recB_top, flushB_top]                   # end wall at uB
-        return tris
-
-
 class Cap:
     """The pixel's own top layer: a full-width unit-height slab, flared
-    outward on any clear (bulged) side, with an Inlet cut into any side
-    facing a taller neighbor, and simply omitted on any fused side."""
+    outward on any clear (bulged) side, and simply omitted on any fused
+    side."""
 
-    def __init__(self, x0, x1, z0, z1, y0, y1, openFaces, inlets, floorBounds=None):
+    def __init__(self, x0, x1, z0, z1, y0, y1, openFaces, floorBounds=None):
         self.x0, self.x1, self.z0, self.z1 = x0, x1, z0, z1
         self.y0, self.y1 = y0, y1
         self.openFaces = openFaces
-        self.inlets = {inlet.face: inlet for inlet in inlets}
         # The underside quad below closes over exactly this rectangle:
         # - None (default, no Tube below): the cap's own full footprint -
         #   nothing else is going to close it, so it's fully self-contained.
@@ -209,11 +106,8 @@ class Cap:
         for face in Face:
             if face in self.openFaces:
                 continue
-            if face in self.inlets:
-                tris += self.inlets[face].triangles()
-            else:
-                fixedValue, u0, u1 = _faceRange(face, self.x0, self.z0, self.x1, self.z1)
-                tris += _faceQuad(face, fixedValue, u0, u1, self.y0, self.y1)
+            fixedValue, u0, u1 = _faceRange(face, self.x0, self.z0, self.x1, self.z1)
+            tris += _faceQuad(face, fixedValue, u0, u1, self.y0, self.y1)
 
         tris += _quad(
             Vector3(self.x0, self.y1, self.z0), Vector3(self.x1, self.y1, self.z0),
@@ -277,15 +171,13 @@ class Collar:
 class Tube:
     """Everything below the cap, running from the print bed up to the
     cap's underside - always narrower than the cap (that inset is what
-    makes room for the bulge and the notch/inlet mechanism). Carries a
-    Notch for every side where this pixel is taller than its neighbor."""
+    makes room for the bulge)."""
 
-    def __init__(self, x0, x1, z0, z1, y1, openFaces, hollow, notches):
+    def __init__(self, x0, x1, z0, z1, y1, openFaces, hollow):
         self.x0, self.x1, self.z0, self.z1 = x0, x1, z0, z1
         self.y1 = y1
         self.openFaces = openFaces
         self.hollow = hollow
-        self.notches = notches
 
     def triangles(self):
         sideSkip = {face.boxKey for face in self.openFaces}
@@ -305,8 +197,6 @@ class Tube:
             # solid part open on its underside.
             tris = _box((self.x0, 0.0, self.z0), (self.x1, self.y1, self.z1), skip=sideSkip | {'+y'})
 
-        for notch in self.notches:
-            tris += notch.triangles()
         return tris
 
     def _wallBox(self, face, u0=None, u1=None):
@@ -447,11 +337,6 @@ class Pixel:
         capZ1 = z1 + (BULGE_SIZE if Face.SOUTH in plan.bulged else 0.0)
         capY0, capY1 = plan.height - 1.0, float(plan.height)
 
-        inlets = []
-        for face, neighborHeight in plan.inlets.items():
-            fixedValue, u0, u1 = _faceRange(face, capX0, capZ0, capX1, capZ1)
-            inlets.append(Inlet(face, fixedValue, u0, u1, capY0, capY1))
-
         tubeBounds = None
         if capY0 > 0:
             m = TUBE_MARGIN
@@ -459,9 +344,9 @@ class Pixel:
             # neighbor: the tube sits flush with the grid boundary there
             # instead of inset, so the two tubes' solids actually meet
             # (fused) or touch (plain wall) rather than each standing
-            # apart with a gap between them - only notch/inlet sides (need
-            # room for the interlock) and bulge sides (need room for the
-            # diagonal-fill trick) stay inset.
+            # apart with a gap between them - only bulged sides (a clear
+            # side, or a height mismatch - need room for the diagonal-fill
+            # trick) stay inset.
             flush = plan.flushTubeSides
             tubeX0 = x0 if Face.WEST in flush else x0 + m
             tubeX1 = x1 if Face.EAST in flush else x1 - m
@@ -479,18 +364,12 @@ class Pixel:
             floorBounds = tubeBounds
         else:
             floorBounds = False
-        self.cap = Cap(capX0, capX1, capZ0, capZ1, capY0, capY1, plan.fused, inlets, floorBounds=floorBounds)
+        self.cap = Cap(capX0, capX1, capZ0, capZ1, capY0, capY1, plan.fused, floorBounds=floorBounds)
 
         self.tube = None
         self.collar = None
         if tubeBounds is not None:
-            notches = []
-            for face, neighborHeight in plan.notches.items():
-                boundaryValue, u0, u1 = _faceRange(face, x0, z0, x1, z1)
-                uMid, uHalf = (u0 + u1) / 2.0, (u1 - u0) * NOTCH_WIDTH_RATIO / 2.0
-                notches.append(Notch(face, boundaryValue, uMid, uHalf, neighborHeight))
-
-            self.tube = Tube(*tubeBounds, capY0, plan.fused, hollow, notches)
+            self.tube = Tube(*tubeBounds, capY0, plan.fused, hollow)
             self.collar = Collar((capX0, capX1, capZ0, capZ1), tubeBounds, capY0, flush)
 
     def triangles(self):
@@ -501,13 +380,4 @@ class Pixel:
         return tris
 
     def warnings(self):
-        if not self.tube:
-            return []
-        y, x = self.plan.position
-        return [
-            f"Thin connector at ({y}, {x}) side {notch.face.label}: "
-            f"drop of {self.plan.height - notch.neighborHeight} layers "
-            f"over a {1.0 - 2 * TUBE_MARGIN:.2f}-unit-wide tube."
-            for notch in self.tube.notches
-            if notch.isThinRelativeTo(self.plan.height)
-        ]
+        return []

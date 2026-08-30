@@ -35,7 +35,7 @@ class _GridView:
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
     Reading this top-to-bottom: PixelPlanner classifies the grid (pixelPlan.py),
-    Pixel assembles a plan into Cap/Tube/Notch/Inlet/Collar geometry
+    Pixel assembles a plan into Cap/Tube/Collar geometry
     (pixelComponents.py), and everything below just wires those together -
     grouping pixels into physically connected pieces per color, and
     collecting warnings from each pixel along the way."""
@@ -108,9 +108,9 @@ class Mesh:
         # or anywhere in the margin border - becomes base material:
         # literally another color, at height 1, run through the exact same
         # PixelPlanner/Pixel pipeline as everything else. A real pixel
-        # taller than it gets a completely ordinary notch into it, and the
-        # base cells fuse with each other exactly like any same-color
-        # same-height neighbors always do.
+        # taller than it gets a completely ordinary bulged wall against it,
+        # and the base cells fuse with each other exactly like any
+        # same-color same-height neighbors always do.
         emptyMask = gridLayers < 1
         gridMap[emptyMask] = baseColor
         gridLayers[emptyMask] = BASE_HEIGHT

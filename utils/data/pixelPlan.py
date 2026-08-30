@@ -53,9 +53,10 @@ _OPPOSITE_FACE = {
 class PixelPlan:
     """What a single occupied grid cell needs, in grid/height terms only -
     no coordinates or geometry. This is the direct, testable output of
-    looking at the canvas: which sides fuse into a neighbor, which are
-    clear (and so flare into a bulge), which face a taller neighbor (and
-    need an inlet), and which face a shorter one (and own a notch)."""
+    looking at the canvas: which sides fuse into a neighbor, and which are
+    clear (a different height counts as clear too - pieces interlock by
+    hand, not by geometry, so a height mismatch gets its own independent
+    wall rather than any special treatment)."""
 
     y: int
     x: int
@@ -63,8 +64,6 @@ class PixelPlan:
     height: int
     fused: set = field(default_factory=set)
     bulged: set = field(default_factory=set)
-    notches: dict = field(default_factory=dict)   # Face -> neighbor height (this pixel is taller)
-    inlets: dict = field(default_factory=dict)     # Face -> neighbor height (this pixel is shorter)
 
     @property
     def position(self):
@@ -73,9 +72,9 @@ class PixelPlan:
     @property
     def plainWalls(self):
         """Sides with a same-height, differently-colored neighbor: no fuse,
-        no bulge, no notch/inlet - just a flat wall, with nothing needing
-        clearance from its neighbor's identical flat wall."""
-        return set(Face) - self.fused - self.bulged - set(self.notches) - set(self.inlets)
+        no bulge - just a flat wall, with nothing needing clearance from
+        its neighbor's identical flat wall."""
+        return set(Face) - self.fused - self.bulged
 
     @property
     def flushTubeSides(self):
@@ -121,11 +120,7 @@ class PixelPlanner:
             nColor, nHeight = int(self.canvas.map[pos]), int(self.canvas.layers[pos])
             if nColor == color and nHeight == result.height:
                 result.fused.add(face)
-            elif nHeight < result.height:
-                result.notches[face] = nHeight
-                result.bulged.add(face)
-            elif nHeight > result.height:
-                result.inlets[face] = nHeight
+            elif nHeight != result.height:
                 result.bulged.add(face)
             # Same height, different color: a plain wall - stays flush
             # against the matching neighbor, no bulge.

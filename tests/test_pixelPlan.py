@@ -28,8 +28,6 @@ def test_plan_classifies_fused_side():
     plan = PixelPlanner(canvas).plan(0, 0)
 
     assert Face.EAST in plan.fused
-    assert not plan.notches
-    assert not plan.inlets
     assert Face.EAST not in plan.bulged  # fused sides merge into one continuous surface, no wall to bulge
 
 
@@ -43,7 +41,7 @@ def test_plan_classifies_clear_side_as_bulged():
     assert plan.bulged == {Face.NORTH, Face.WEST, Face.EAST, Face.SOUTH}
 
 
-def test_plan_classifies_notch_and_inlet_for_a_height_difference():
+def test_plan_classifies_a_height_difference_as_bulged():
     canvas = make_canvas()
     canvas.layers[0, 1] = 4  # blue, taller
     canvas.layers[0, 2] = 2  # red, shorter, directly east of blue
@@ -52,13 +50,12 @@ def test_plan_classifies_notch_and_inlet_for_a_height_difference():
     blue = planner.plan(0, 1)
     red = planner.plan(0, 2)
 
-    assert blue.notches[Face.EAST] == 2
-    assert Face.EAST not in blue.inlets
-    assert Face.EAST in blue.bulged  # no same-height neighbor there, so it still bulges
-
-    assert red.inlets[Face.WEST] == 4
-    assert Face.WEST not in red.notches
+    # No interlock mechanism - a height mismatch is just a clear side, so
+    # each pixel draws its own independent wall, same as an empty neighbor.
+    assert Face.EAST in blue.bulged
+    assert Face.EAST not in blue.fused
     assert Face.WEST in red.bulged
+    assert Face.WEST not in red.fused
 
 
 def test_plan_same_height_different_color_is_a_plain_wall():
@@ -70,8 +67,6 @@ def test_plan_same_height_different_color_is_a_plain_wall():
     blue = planner.plan(0, 1)
 
     assert Face.EAST not in blue.fused
-    assert Face.EAST not in blue.notches
-    assert Face.EAST not in blue.inlets
     assert Face.EAST in blue.plainWalls
     assert Face.EAST not in blue.bulged  # must stay flush against the matching neighbor
 
@@ -86,10 +81,10 @@ def test_plain_walls_excludes_fused_side():
     assert Face.EAST not in plan.plainWalls
 
 
-def test_plain_walls_excludes_a_notch_side():
+def test_plain_walls_excludes_a_height_mismatch_side():
     canvas = make_canvas()
     canvas.layers[0, 1] = 4  # blue, taller
-    canvas.layers[0, 2] = 2  # red, shorter - blue owns a notch on its east side
+    canvas.layers[0, 2] = 2  # red, shorter
 
     blue = PixelPlanner(canvas).plan(0, 1)
 
@@ -110,7 +105,7 @@ def test_bulge_fires_on_every_side_without_a_same_height_neighbor():
     # right against it there - a same-color same-height neighbor fuses
     # (no separate wall to bulge), a different-color same-height neighbor
     # is a plain wall (must stay flush against it); every other case -
-    # empty, notch, or inlet - bulges.
+    # empty, or a height mismatch - bulges.
     canvas = make_canvas()
     canvas.layers[0, 0] = 3               # this pixel
     canvas.layers[0, 1] = 3               # east: same color, same height -> fused

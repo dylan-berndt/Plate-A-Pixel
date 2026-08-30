@@ -71,9 +71,9 @@ def test_same_color_same_height_neighbors_fuse_into_one_component(two_color_canv
 
 
 def test_different_height_neighbors_never_fuse_even_when_connected(two_color_canvas):
-    # blue (taller, height 4) directly left of red (shorter, height 2) -
-    # the notch/inlet case. They must interlock geometrically but still
-    # come out as two separate solids, one per color.
+    # blue (taller, height 4) directly left of red (shorter, height 2) - no
+    # interlock between them, just two independent solids each bulging its
+    # own wall toward the other.
     two_color_canvas.layers[0, 1] = 4  # blue
     two_color_canvas.layers[0, 2] = 2  # red
 
@@ -87,15 +87,15 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     assert len(mesh.meshes[redIndex]) == 1
     assert total_triangles(mesh) > 0
 
-    # blue's notch should poke past the shared boundary (x=2) into red's cell
-    blueVerts = mesh.meshes[blueIndex][0]
-    assert max(v.x for v in blueVerts) > 2.0
-    # red's cap also bulges toward blue now (no same-height neighbor there),
-    # but BULGE_SIZE stays under TUBE_MARGIN specifically so this can never
-    # reach blue's own (inset) tube - it only ever closes the gap, never
-    # collides with it.
     from utils.data.pixelComponents import BULGE_SIZE, TUBE_MARGIN
+
+    # each pixel's cap bulges toward the other (no same-height neighbor
+    # there), flaring BULGE_SIZE past the shared boundary (x=2) - and
+    # BULGE_SIZE stays under TUBE_MARGIN specifically so neither cap's
+    # bulge ever reaches the other's own (inset) tube.
     assert BULGE_SIZE < TUBE_MARGIN
+    blueVerts = mesh.meshes[blueIndex][0]
+    assert max(v.x for v in blueVerts) == 2.0 + BULGE_SIZE
     redVerts = mesh.meshes[redIndex][0]
     assert min(v.x for v in redVerts) == 2.0 - BULGE_SIZE
 
@@ -121,9 +121,9 @@ def test_fully_packed_checkerboard_has_no_bulge_connectivity():
     # A 2x2 checkerboard where every side of every pixel has *some* pixel
     # next to it (just possibly a different color) - bulging only ever
     # happens on a genuinely clear side, so nothing bulges here and neither
-    # diagonal pair connects. (A dedicated notch-based connector for this
-    # case, keyed off palette order per the corrected spec, isn't
-    # implemented yet - see the write-up.)
+    # diagonal pair connects. (A dedicated connector for this case, keyed
+    # off palette order per the corrected spec, isn't implemented yet -
+    # see the write-up.)
     img = np.zeros((2, 2, 3), dtype=np.uint8)
     img[0, 0] = (30, 30, 200)
     img[1, 1] = (30, 30, 200)
@@ -167,20 +167,6 @@ def test_hollow_flag_adds_an_inner_shell_wall(two_color_canvas):
     hollow._calculateMesh()
 
     assert total_triangles(hollow) > total_triangles(solid)
-
-
-def test_thin_connector_is_flagged(two_color_canvas):
-    # A large height gap between two adjacent, differently colored pixels
-    # produces a tall, narrow connector - worth a soft warning, not a hard
-    # error, since it's a printability concern rather than an invalid shape.
-    two_color_canvas.layers[0, 1] = 20
-    two_color_canvas.layers[0, 2] = 1
-
-    mesh = Mesh()
-    mesh.canvas = two_color_canvas
-    mesh._calculateMesh()
-
-    assert any("Thin connector" in w for w in mesh.warnings)
 
 
 def base_index(canvas):
@@ -232,11 +218,11 @@ def test_base_plate_margin_extends_past_the_canvas_edge():
     assert base_extent(withMargin) > base_extent(withoutMargin)
 
 
-def test_a_taller_pixel_gets_a_genuine_notch_into_the_base():
+def test_a_taller_pixel_bulges_against_the_base():
     # The whole point: no separate mechanism for this - a real pixel taller
     # than the base (height 1) sitting next to it goes through exactly the
-    # same notch/inlet classification as two differently-colored pixels of
-    # different heights always have.
+    # same height-mismatch classification as two differently-colored
+    # pixels of different heights always have - it just bulges.
     img = np.zeros((3, 3, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
     canvas = Canvas(img)
@@ -248,18 +234,12 @@ def test_a_taller_pixel_gets_a_genuine_notch_into_the_base():
     mesh.baseMargin = 0
     mesh._calculateMesh()
 
-    from utils.data.pixelComponents import NOTCH_DEPTH
-
     from utils.data.pixelComponents import BULGE_SIZE
 
     blueIndex = canvas.map[1, 1]
     blueVerts = mesh.meshes[blueIndex][0]
-    # a notch vertex exists exactly NOTCH_DEPTH past the pixel's own cell
-    # boundary (x/z in [1,2]) on its east/south side
-    assert any(v.x == 2.0 + NOTCH_DEPTH for v in blueVerts)
     # it's surrounded entirely by (shorter) base cells, with no same-height
-    # neighbor anywhere - so the cap itself also bulges on every side,
-    # further out than the notch's own small protrusion
+    # neighbor anywhere - so the cap bulges on every side.
     assert max(v.x for v in blueVerts) == 2.0 + BULGE_SIZE
     assert min(v.x for v in blueVerts) == 1.0 - BULGE_SIZE
     assert max(v.z for v in blueVerts) == 2.0 + BULGE_SIZE
