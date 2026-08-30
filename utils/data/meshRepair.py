@@ -20,6 +20,22 @@ def _flatPlane(tri):
     return None
 
 
+def _edgePlanes(A, B):
+    """Every axis along which edge A-B is itself axis-aligned (both
+    endpoints share that coordinate) - independent of whether the
+    triangle this edge belongs to is flat overall. A vertical quad (like
+    bulgeSeamPatch's) still has a perfectly flat top and bottom edge; a
+    candidate vertex living on one of those needs to be found by a flat
+    neighbor even though the vertical quad itself never passes
+    _flatPlane."""
+    planes = []
+    for axis in _AXES:
+        va, vb = round(getattr(A, axis), 6), round(getattr(B, axis), 6)
+        if va == vb:
+            planes.append((axis, va))
+    return planes
+
+
 def _project(v, axis):
     return tuple(getattr(v, a) for a in _AXES if a != axis)
 
@@ -74,21 +90,24 @@ def repairTJunctions(triangles, maxPasses=4):
         if not openEdges:
             break
 
+        # Candidates come from the *edges* themselves, not from whichever
+        # triangle happens to own them - a vertical quad (bulgeSeamPatch's,
+        # say) is never flat overall, but its top and bottom edges are
+        # each flat on their own, and a flat neighbor (a Collar or Cap
+        # wall quad) needs to see those endpoints as candidates too.
         openVertKeysByPlane = defaultdict(set)
         openVertObjs = {}
         for tri in triList:
-            plane = _flatPlane(tri)
-            if plane is None:
-                continue
-            planeKey = (plane[0], round(plane[1], 6))
             for a, b in ((0, 1), (1, 2), (2, 0)):
                 A, B = tri[a], tri[b]
                 if frozenset((_roundedKey(A), _roundedKey(B))) not in openEdges:
                     continue
-                for v in (A, B):
-                    key = _roundedKey(v)
-                    openVertKeysByPlane[planeKey].add(key)
-                    openVertObjs[key] = v
+                for axis, value in _edgePlanes(A, B):
+                    planeKey = (axis, round(value, 6))
+                    for v in (A, B):
+                        key = _roundedKey(v)
+                        openVertKeysByPlane[planeKey].add(key)
+                        openVertObjs[key] = v
 
         replacements = {}
         for idx, tri in enumerate(triList):
