@@ -36,7 +36,7 @@ def test_wand_select_undo_restores_previous_selection(controller):
     controller.wandSelect(RED, mode="replace")
     assert controller.project.canvas.selection.sum() == len(RED_BLOCK) + 1  # wand also grabs RED_ISLAND
 
-    controller.undoStack.undo()
+    controller.undo()
 
     assert controller.project.canvas.selection.sum() == 0
 
@@ -91,7 +91,7 @@ def test_transform_selection_layer_undo_restores_heights_and_rebuilds(controller
     controller.wandSelect(RED, mode="replace")
     controller.transformSelectionLayer(3)
 
-    controller.undoStack.undo()
+    controller.undo()
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
@@ -109,7 +109,7 @@ def test_set_hollow_updates_view_settings_and_rebuilds_mesh(controller):
 
 def test_set_hollow_undo_reverts(controller):
     controller.setHollow(True)
-    controller.undoStack.undo()
+    controller.undo()
 
     assert controller.project.viewSettings.hollow is False
 
@@ -159,7 +159,7 @@ def test_rename_color_undo_reverts(controller):
     index = controller.project.canvas.palette.indexOf(RED)
     controller.renameColor(index, "Fire Red")
 
-    controller.undoStack.undo()
+    controller.undo()
 
     assert controller.project.canvas.palette[index].name == ""
 
@@ -178,6 +178,6 @@ def test_recolor_color_undo_reverts(controller):
     index = controller.project.canvas.palette.indexOf(RED)
     controller.recolorColor(index, (10, 20, 30))
 
-    controller.undoStack.undo()
+    controller.undo()
 
     assert controller.project.canvas.palette[index].color == RED

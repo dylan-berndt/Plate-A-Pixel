@@ -1,32 +1,22 @@
+from copy import deepcopy
+from dataclasses import replace
+
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QUndoStack, QUndoCommand
 
 from ..data.project import Project
 
 
-class _CallbackCommand(QUndoCommand):
-    """A QUndoCommand built from two closures instead of a bespoke
-    subclass per operation. Every mutation ProjectController makes is a
-    direct read-modify-write on a numpy array or a Palette entry, so a
-    snapshot-and-restore closure pair is simpler than reimplementing each
-    domain call's inverse by hand."""
-
-    def __init__(self, text, do, undo):
-        super().__init__(text)
-        self._do = do
-        self._undo = undo
-
-    def redo(self):
-        self._do()
-
-    def undo(self):
-        self._undo()
-
-
 class ProjectController(QObject):
     """Wraps one Project, translating UI-facing intents into domain-layer
-    calls, pushing each as an undoable command, and announcing the result
-    as a Qt signal. Nothing here touches a QWidget.
+    calls and announcing the result as a Qt signal. Nothing here touches
+    a QWidget.
+
+    Undo is a plain stack of whole-state snapshots (layers, selection,
+    palette, view settings) - there isn't enough data in a Project to
+    justify a command pattern with a do/undo pair per operation. Every
+    mutating method pushes one snapshot before it acts; undo()/redo() pop
+    a snapshot and restore it wholesale, then just re-emit everything
+    rather than tracking what specifically changed.
 
     Mesh recomputation is synchronous: any edit that can change mesh
     geometry rebuilds it immediately and emits meshReady before the call
@@ -47,7 +37,43 @@ class ProjectController(QObject):
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.project = project
-        self.undoStack = QUndoStack(self)
+        self._undoStack = []
+        self._redoStack = []
+
+    # -- undo/redo ------------------------------------------------------
+
+    def _snapshot(self):
+        canvas = self.project.canvas
+        return (
+            canvas.layers.copy(),
+            canvas.selection.copy(),
+            deepcopy(canvas.palette),
+            replace(self.project.viewSettings),
+        )
+
+    def _restore(self, snapshot):
+        canvas = self.project.canvas
+        canvas.layers, canvas.selection, canvas.palette, self.project.viewSettings = snapshot
+        self._rebuildMesh()
+        self.selectionChanged.emit()
+        self.paletteChanged.emit()
+        self.viewSettingsChanged.emit()
+
+    def _pushUndo(self):
+        self._undoStack.append(self._snapshot())
+        self._redoStack.clear()
+
+    def undo(self):
+        if not self._undoStack:
+            return
+        self._redoStack.append(self._snapshot())
+        self._restore(self._undoStack.pop())
+
+    def redo(self):
+        if not self._redoStack:
+            return
+        self._undoStack.append(self._snapshot())
+        self._restore(self._redoStack.pop())
 
     # -- selection ----------------------------------------------------
 
@@ -55,32 +81,14 @@ class ProjectController(QObject):
         """`color` is an RGB tuple identifying the palette color to
         select, matching Canvas.wandSelect's own (documented, working)
         color-triple path."""
-        canvas = self.project.canvas
-        previous = canvas.selection.copy()
-
-        def do():
-            canvas.wandSelect(color, mode=mode)
-            self.selectionChanged.emit()
-
-        def undo():
-            canvas.selection = previous
-            self.selectionChanged.emit()
-
-        self.undoStack.push(_CallbackCommand("Wand Select", do, undo))
+        self._pushUndo()
+        self.project.canvas.wandSelect(color, mode=mode)
+        self.selectionChanged.emit()
 
     def bucketSelect(self, pos, contiguous=True, diagonal=False, mode="replace"):
-        canvas = self.project.canvas
-        previous = canvas.selection.copy()
-
-        def do():
-            canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)
-            self.selectionChanged.emit()
-
-        def undo():
-            canvas.selection = previous
-            self.selectionChanged.emit()
-
-        self.undoStack.push(_CallbackCommand("Bucket Select", do, undo))
+        self._pushUndo()
+        self.project.canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)
+        self.selectionChanged.emit()
 
     def applyTool(self, toolName, pos, mode="replace", **kwargs):
         if toolName == "wand":
@@ -95,44 +103,19 @@ class ProjectController(QObject):
     # -- height (mesh-affecting) ----------------------------------------
 
     def transformSelectionLayer(self, delta):
-        canvas = self.project.canvas
-        previous = canvas.layers.copy()
-
-        def do():
-            canvas.transformSelection(delta)
-            self._rebuildMesh()
-
-        def undo():
-            canvas.layers = previous
-            self._rebuildMesh()
-
-        self.undoStack.push(_CallbackCommand("Change Height", do, undo))
+        self._pushUndo()
+        self.project.canvas.transformSelection(delta)
+        self._rebuildMesh()
 
     def setHollow(self, hollow):
-        previous = self.project.viewSettings.hollow
-
-        def do():
-            self.project.viewSettings.hollow = hollow
-            self._rebuildMesh()
-
-        def undo():
-            self.project.viewSettings.hollow = previous
-            self._rebuildMesh()
-
-        self.undoStack.push(_CallbackCommand("Set Hollow", do, undo))
+        self._pushUndo()
+        self.project.viewSettings.hollow = hollow
+        self._rebuildMesh()
 
     def setMargin(self, margin):
-        previous = self.project.viewSettings.baseMargin
-
-        def do():
-            self.project.viewSettings.baseMargin = margin
-            self._rebuildMesh()
-
-        def undo():
-            self.project.viewSettings.baseMargin = previous
-            self._rebuildMesh()
-
-        self.undoStack.push(_CallbackCommand("Set Margin", do, undo))
+        self._pushUndo()
+        self.project.viewSettings.baseMargin = margin
+        self._rebuildMesh()
 
     def _rebuildMesh(self):
         self.meshInvalidated.emit()
@@ -145,55 +128,23 @@ class ProjectController(QObject):
     # these don't touch the mesh at all.
 
     def setCellWidth(self, mm):
-        previous = self.project.viewSettings.cellWidth
-
-        def do():
-            self.project.viewSettings.cellWidth = mm
-            self.viewSettingsChanged.emit()
-
-        def undo():
-            self.project.viewSettings.cellWidth = previous
-            self.viewSettingsChanged.emit()
-
-        self.undoStack.push(_CallbackCommand("Set Cell Width", do, undo))
+        self._pushUndo()
+        self.project.viewSettings.cellWidth = mm
+        self.viewSettingsChanged.emit()
 
     def setCellHeight(self, mm):
-        previous = self.project.viewSettings.cellHeight
-
-        def do():
-            self.project.viewSettings.cellHeight = mm
-            self.viewSettingsChanged.emit()
-
-        def undo():
-            self.project.viewSettings.cellHeight = previous
-            self.viewSettingsChanged.emit()
-
-        self.undoStack.push(_CallbackCommand("Set Cell Height", do, undo))
+        self._pushUndo()
+        self.project.viewSettings.cellHeight = mm
+        self.viewSettingsChanged.emit()
 
     # -- palette ----------------------------------------------------------
 
     def renameColor(self, index, name):
-        previous = self.project.canvas.palette[index].name
-
-        def do():
-            self.project.canvas.palette.rename(index, name)
-            self.paletteChanged.emit()
-
-        def undo():
-            self.project.canvas.palette.rename(index, previous)
-            self.paletteChanged.emit()
-
-        self.undoStack.push(_CallbackCommand("Rename Color", do, undo))
+        self._pushUndo()
+        self.project.canvas.palette.rename(index, name)
+        self.paletteChanged.emit()
 
     def recolorColor(self, index, rgb):
-        previous = self.project.canvas.palette[index].color
-
-        def do():
-            self.project.canvas.palette.setColor(index, rgb)
-            self.paletteChanged.emit()
-
-        def undo():
-            self.project.canvas.palette.setColor(index, previous)
-            self.paletteChanged.emit()
-
-        self.undoStack.push(_CallbackCommand("Recolor", do, undo))
+        self._pushUndo()
+        self.project.canvas.palette.setColor(index, rgb)
+        self.paletteChanged.emit()
