@@ -30,12 +30,13 @@ class Tool:
 
 
 class FunctionalTool(Tool):
-    """A Tool that can act on a canvas position, given the ProjectController
-    to act through. Handlers take that controller as an explicit argument
-    rather than the tool storing one itself - a tool stays selected across
-    a tab switch, but which project it should be editing changes, so
-    ToolController resolves the current one on every call instead of a
-    tool caching a stale reference.
+    """A Tool that can act on a canvas position, given the CanvasController
+    to act through (see utils/controllers/canvasController.py). Handlers
+    take that controller as an explicit argument rather than the tool
+    storing one itself - a tool stays selected across a tab switch, but
+    which project it should be editing changes, so ToolController
+    resolves the current one on every call instead of a tool caching a
+    stale reference.
 
     onPress is the only handler a tool must implement - onDrag/onRelease
     default to no-ops for tools (like Wand) that only care about a single

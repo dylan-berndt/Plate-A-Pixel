@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 
@@ -49,30 +50,33 @@ class ProjectController(QObject):
     Undo is a plain stack of whole-state snapshots (layers, selection,
     palette, view settings) - there isn't enough data in a Project to
     justify a command pattern with a do/undo pair per operation. Every
-    mutating method pushes one snapshot before it acts; undo()/redo() pop
-    a snapshot and restore it wholesale, then just re-emit everything
-    rather than tracking what specifically changed. Whether undo/redo are
-    currently available is for the view to check (canUndo/canRedo) - no
-    signal fires just for that.
+    mutating method (here and on canvasController) pushes one snapshot
+    before it acts via pushUndo(); undo()/redo() pop a snapshot and
+    restore it wholesale, then just re-emit everything rather than
+    tracking what specifically changed. Whether undo/redo are currently
+    available is for the view to check (canUndo/canRedo) - no signal
+    fires just for that.
 
     A multi-call gesture (a tool's onPress/onDrag/.../onRelease sequence)
     should undo as one step, not one step per call - beginGesture()/
-    endGesture() bracket that: only the first _pushUndo() inside a
-    gesture actually pushes a snapshot, so a drag calling bucketSelect
-    fifty times still costs one undo entry.
+    endGesture() bracket that: only the first pushUndo() inside a
+    gesture actually pushes a snapshot, so a drag calling
+    canvasController.bucketSelect fifty times still costs one undo entry.
 
     Mesh recomputation runs on a background QThread (~0.6s for a full
-    image is long enough to visibly stall the UI otherwise): meshInvalidated
-    fires immediately, then meshReady(mesh) once the worker finishes. If
-    another edit arrives while a computation is already running, only the
-    latest request is kept and started when the current one finishes -
-    a burst of edits collapses into a single follow-up recompute rather
-    than queuing one per edit.
+    image is long enough to visibly stall the UI otherwise): calling
+    rebuildMesh() fires meshInvalidated immediately, then meshReady(mesh)
+    once the worker finishes. If another edit arrives while a computation
+    is already running, only the latest request is kept and started when
+    the current one finishes - a burst of edits collapses into a single
+    follow-up recompute rather than queuing one per edit.
 
-    Canvas interaction (turning a click into one of the calls below)
-    isn't this class's job - see ToolController and Tool in ..tools.
-    General canvas-view operations that are neither this nor a Tool's job
-    live on canvasController instead (see CanvasController)."""
+    Canvas editing (selection, height, hollow/margin) isn't this class's
+    job - see canvasController (CanvasController), which calls back into
+    pushUndo()/rebuildMesh() here to stay on this same undo stack and
+    mesh pipeline rather than owning its own. Turning a click into a
+    canvasController call isn't this class's job either - see
+    ToolController and Tool in ..tools."""
 
     selectionChanged = Signal()
     paletteChanged = Signal()
@@ -109,7 +113,7 @@ class ProjectController(QObject):
 
     def beginGesture(self):
         """Start a multi-call gesture: pushes one undo snapshot now (if
-        not already inside a gesture) and suppresses _pushUndo() until a
+        not already inside a gesture) and suppresses pushUndo() until a
         matching endGesture()."""
         if self._gestureDepth == 0:
             self._pushUndoNow()
@@ -131,15 +135,32 @@ class ProjectController(QObject):
         canvas = self.project.canvas
         canvas.layers, canvas.selection, canvas.palette, self.project.viewSettings = snapshot
         self._dirty = True
-        self._rebuildMesh()
+        self.rebuildMesh()
         self.selectionChanged.emit()
         self.paletteChanged.emit()
         self.viewSettingsChanged.emit()
 
-    def _pushUndo(self):
+    def pushUndo(self):
+        """Record an undo point before a mutation. Called by this class's
+        own mutating methods and by canvasController's - respects an
+        in-progress gesture (see beginGesture) either way."""
         if self._gestureDepth > 0:
             return
         self._pushUndoNow()
+
+    @contextmanager
+    def editing(self, affectsMesh=False):
+        """Wrap one undoable canvas edit: pushUndo() on entry, then either
+        rebuildMesh() or selectionChanged.emit() on exit depending on
+        whether this particular edit can change mesh geometry. Used by
+        canvasController's methods so each one is a single `with` block
+        instead of repeating pushUndo()/emit-or-rebuild by hand."""
+        self.pushUndo()
+        yield
+        if affectsMesh:
+            self.rebuildMesh()
+        else:
+            self.selectionChanged.emit()
 
     def _pushUndoNow(self):
         self._undoStack.append(self._snapshot())
@@ -169,36 +190,10 @@ class ProjectController(QObject):
         self.project.save(filePath)
         self._dirty = False
 
-    # -- selection ----------------------------------------------------
-
-    def bucketSelect(self, pos, contiguous=True, diagonal=False, mode="replace"):
-        self._pushUndo()
-        self.project.canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)
-        self.selectionChanged.emit()
-
-    def brushSelect(self, pos, radius, mode="replace"):
-        self._pushUndo()
-        self.project.canvas.brushSelect(pos, radius, mode=mode)
-        self.selectionChanged.emit()
-
-    # -- height (mesh-affecting) ----------------------------------------
-
-    def transformSelectionLayer(self, delta):
-        self._pushUndo()
-        self.project.canvas.transformSelection(delta)
-        self._rebuildMesh()
-
-    def setHollow(self, hollow):
-        self._pushUndo()
-        self.project.viewSettings.hollow = hollow
-        self._rebuildMesh()
-
-    def setMargin(self, margin):
-        self._pushUndo()
-        self.project.viewSettings.baseMargin = margin
-        self._rebuildMesh()
-
-    def _rebuildMesh(self):
+    def rebuildMesh(self):
+        """Recompute the mesh on a background thread from the project's
+        current state - called by canvasController after any edit that
+        can change mesh geometry (height, hollow, baseMargin)."""
         self.meshInvalidated.emit()
         request = (
             _CanvasSnapshot(self.project.canvas),
@@ -231,23 +226,23 @@ class ProjectController(QObject):
     # these don't touch the mesh at all.
 
     def setCellWidth(self, mm):
-        self._pushUndo()
+        self.pushUndo()
         self.project.viewSettings.cellWidth = mm
         self.viewSettingsChanged.emit()
 
     def setCellHeight(self, mm):
-        self._pushUndo()
+        self.pushUndo()
         self.project.viewSettings.cellHeight = mm
         self.viewSettingsChanged.emit()
 
     # -- palette ----------------------------------------------------------
 
     def renameColor(self, index, name):
-        self._pushUndo()
+        self.pushUndo()
         self.project.canvas.palette.rename(index, name)
         self.paletteChanged.emit()
 
     def recolorColor(self, index, rgb):
-        self._pushUndo()
+        self.pushUndo()
         self.project.canvas.palette.setColor(index, rgb)
         self.paletteChanged.emit()

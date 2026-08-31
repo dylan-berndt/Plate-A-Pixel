@@ -16,7 +16,10 @@ class ToolController(QObject):
     brackets the whole sequence in beginGesture()/endGesture() so it
     undoes as one step, and every call in between - even if the active
     tab somehow changes mid-drag - keeps targeting that same controller
-    rather than re-resolving a possibly different one."""
+    rather than re-resolving a possibly different one. Tools themselves
+    only ever call canvasController methods (selection, height, hollow/
+    margin - see CanvasController), so that's what actually gets handed
+    to onPress/onDrag/onRelease, not the ProjectController itself."""
 
     activeToolChanged = Signal(object)  # Tool
 
@@ -50,4 +53,4 @@ class ToolController(QObject):
         controller = self._gestureController or self.appController.activeController
         if tool is None or controller is None:
             return
-        getattr(tool, handlerName)(controller, pos)
+        getattr(tool, handlerName)(controller.canvasController, pos)

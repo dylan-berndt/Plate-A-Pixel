@@ -37,7 +37,7 @@ def test_wand_tool_press_non_contiguous_selects_every_matching_color(controller)
     tool = WandTool()
     tool.selections["contiguous"] = False
 
-    tool.onPress(controller, (0, 0))
+    tool.onPress(controller.canvasController, (0, 0))
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
@@ -49,7 +49,7 @@ def test_wand_tool_press_contiguous_stops_at_the_color_boundary(controller):
     tool = WandTool()
     tool.selections["contiguous"] = True
 
-    tool.onPress(controller, (0, 0))
+    tool.onPress(controller.canvasController, (0, 0))
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
@@ -62,7 +62,7 @@ def test_wand_tool_press_respects_diagonal_option(controller):
     tool.selections["contiguous"] = True
     tool.selections["diagonal"] = False
 
-    tool.onPress(controller, GREEN_DIAGONAL_PAIR[0])
+    tool.onPress(controller.canvasController, GREEN_DIAGONAL_PAIR[0])
 
     canvas = controller.project.canvas
     assert canvas.selection[GREEN_DIAGONAL_PAIR[0]]
@@ -73,7 +73,7 @@ def test_brush_select_tool_press_stamps_a_selection_around_the_position(controll
     tool = BrushSelectTool()
     tool.selections["size"] = 1
 
-    tool.onPress(controller, (0, 0))
+    tool.onPress(controller.canvasController, (0, 0))
 
     canvas = controller.project.canvas
     assert canvas.selection[0, 0]
@@ -87,8 +87,8 @@ def test_brush_select_tool_drag_adds_to_the_selection(controller):
     tool.selections["size"] = 0
     tool.selections["mode"] = "add"
 
-    tool.onPress(controller, (0, 0))
-    tool.onDrag(controller, (5, 5))
+    tool.onPress(controller.canvasController, (0, 0))
+    tool.onDrag(controller.canvasController, (5, 5))
 
     canvas = controller.project.canvas
     assert canvas.selection[0, 0]
@@ -101,8 +101,8 @@ def test_brush_select_tool_drag_after_a_replace_press_still_builds_up_the_stroke
     tool.selections["size"] = 0
     tool.selections["mode"] = "replace"
 
-    tool.onPress(controller, (0, 0))
-    tool.onDrag(controller, (5, 5))
+    tool.onPress(controller.canvasController, (0, 0))
+    tool.onDrag(controller.canvasController, (5, 5))
 
     # a naive "replace" on every sample would leave only (5, 5) selected
     canvas = controller.project.canvas

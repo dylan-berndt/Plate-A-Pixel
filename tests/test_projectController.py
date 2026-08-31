@@ -29,7 +29,7 @@ def _spy(signal):
 def test_bucket_select_non_contiguous_selects_every_matching_color_and_emits(controller):
     calls = _spy(controller.selectionChanged)
 
-    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
+    controller.canvasController.bucketSelect((0, 0), contiguous=False, mode="replace")
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
@@ -39,7 +39,7 @@ def test_bucket_select_non_contiguous_selects_every_matching_color_and_emits(con
 
 
 def test_bucket_select_undo_restores_previous_selection(controller):
-    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
+    controller.canvasController.bucketSelect((0, 0), contiguous=False, mode="replace")
     assert controller.project.canvas.selection.sum() == len(RED_BLOCK) + 1
 
     controller.undo()
@@ -48,7 +48,7 @@ def test_bucket_select_undo_restores_previous_selection(controller):
 
 
 def test_bucket_select_selects_contiguous_region(controller):
-    controller.bucketSelect((0, 0), contiguous=True, diagonal=True, mode="replace")
+    controller.canvasController.bucketSelect((0, 0), contiguous=True, diagonal=True, mode="replace")
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
@@ -59,9 +59,9 @@ def test_bucket_select_selects_contiguous_region(controller):
 def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(controller):
     invalidated = _spy(controller.meshInvalidated)
     ready = _spy(controller.meshReady)
-    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
+    controller.canvasController.bucketSelect((0, 0), contiguous=False, mode="replace")
 
-    controller.transformSelectionLayer(3)
+    controller.canvasController.transformSelectionLayer(3)
     waitForMeshWorker(controller)
 
     canvas = controller.project.canvas
@@ -73,8 +73,8 @@ def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(cont
 
 
 def test_transform_selection_layer_undo_restores_heights_and_rebuilds(controller):
-    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
-    controller.transformSelectionLayer(3)
+    controller.canvasController.bucketSelect((0, 0), contiguous=False, mode="replace")
+    controller.canvasController.transformSelectionLayer(3)
     waitForMeshWorker(controller)  # let that rebuild settle before triggering another
 
     controller.undo()
@@ -87,7 +87,7 @@ def test_transform_selection_layer_undo_restores_heights_and_rebuilds(controller
 def test_set_hollow_updates_view_settings_and_rebuilds_mesh(controller):
     ready = _spy(controller.meshReady)
 
-    controller.setHollow(True)
+    controller.canvasController.setHollow(True)
     waitForMeshWorker(controller)
 
     assert controller.project.viewSettings.hollow is True
@@ -95,7 +95,7 @@ def test_set_hollow_updates_view_settings_and_rebuilds_mesh(controller):
 
 
 def test_set_hollow_undo_reverts(controller):
-    controller.setHollow(True)
+    controller.canvasController.setHollow(True)
     waitForMeshWorker(controller)
 
     controller.undo()
@@ -106,7 +106,7 @@ def test_set_hollow_undo_reverts(controller):
 def test_set_margin_updates_view_settings_and_rebuilds_mesh(controller):
     ready = _spy(controller.meshReady)
 
-    controller.setMargin(2)
+    controller.canvasController.setMargin(2)
     waitForMeshWorker(controller)
 
     assert controller.project.viewSettings.baseMargin == 2
@@ -176,7 +176,7 @@ def test_recolor_color_undo_reverts(controller):
 def test_brush_select_selects_and_emits(controller):
     calls = _spy(controller.selectionChanged)
 
-    controller.brushSelect((0, 0), radius=1, mode="replace")
+    controller.canvasController.brushSelect((0, 0), radius=1, mode="replace")
 
     assert controller.project.canvas.selection.sum() == 3
     assert len(calls) == 1
@@ -184,9 +184,9 @@ def test_brush_select_selects_and_emits(controller):
 
 def test_gesture_collapses_repeated_edits_into_one_undo_step(controller):
     controller.beginGesture()
-    controller.brushSelect((0, 0), radius=0, mode="add")
-    controller.brushSelect((0, 1), radius=0, mode="add")
-    controller.brushSelect((1, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 1), radius=0, mode="add")
+    controller.canvasController.brushSelect((1, 0), radius=0, mode="add")
     controller.endGesture()
 
     assert controller.project.canvas.selection.sum() == 3
@@ -198,8 +198,8 @@ def test_gesture_collapses_repeated_edits_into_one_undo_step(controller):
 
 
 def test_calls_outside_a_gesture_each_push_their_own_undo_step(controller):
-    controller.brushSelect((0, 0), radius=0, mode="add")
-    controller.brushSelect((0, 1), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 1), radius=0, mode="add")
 
     assert len(controller._undoStack) == 2
 
@@ -207,9 +207,9 @@ def test_calls_outside_a_gesture_each_push_their_own_undo_step(controller):
 def test_nested_gesture_calls_only_push_one_snapshot(controller):
     controller.beginGesture()
     controller.beginGesture()
-    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
     controller.endGesture()
-    controller.brushSelect((0, 1), radius=0, mode="add")  # still inside the outer gesture
+    controller.canvasController.brushSelect((0, 1), radius=0, mode="add")  # still inside the outer gesture
     controller.endGesture()
 
     assert len(controller._undoStack) == 1
@@ -219,7 +219,7 @@ def test_can_undo_and_can_redo_reflect_the_stacks(controller):
     assert controller.canUndo is False
     assert controller.canRedo is False
 
-    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
     assert controller.canUndo is True
     assert controller.canRedo is False
 
@@ -237,13 +237,13 @@ def test_new_controller_is_not_dirty(controller):
 
 
 def test_an_edit_marks_the_controller_dirty(controller):
-    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
 
     assert controller.isDirty is True
 
 
 def test_undo_also_marks_the_controller_dirty(controller, tmp_path):
-    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
     controller.save(str(tmp_path / "test.pap"))
     assert controller.isDirty is False
 
@@ -258,7 +258,7 @@ def test_save_without_a_path_or_prior_save_raises(controller):
 
 
 def test_save_writes_to_the_given_path_and_clears_dirty(controller, tmp_path):
-    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
     assert controller.isDirty is True
     path = str(tmp_path / "test.pap")
 
@@ -272,7 +272,7 @@ def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
     path = str(tmp_path / "test.pap")
     controller.save(path)
 
-    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.canvasController.brushSelect((0, 0), radius=0, mode="add")
     controller.save()
 
     assert controller.isDirty is False
