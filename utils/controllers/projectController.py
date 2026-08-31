@@ -75,14 +75,6 @@ class ProjectController(QObject):
 
     # -- selection ----------------------------------------------------
 
-    def wandSelect(self, color, mode="replace"):
-        """`color` is an RGB tuple identifying the palette color to
-        select, matching Canvas.wandSelect's own (documented, working)
-        color-triple path."""
-        self._pushUndo()
-        self.project.canvas.wandSelect(color, mode=mode)
-        self.selectionChanged.emit()
-
     def bucketSelect(self, pos, contiguous=True, diagonal=False, mode="replace"):
         self._pushUndo()
         self.project.canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)

@@ -1,4 +1,4 @@
-from ..tools.registry import ToolRegistry
+from ..tools.tool import ToolRegistry
 from ..tools.wandTool import WandTool
 
 

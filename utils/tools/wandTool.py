@@ -1,5 +1,4 @@
-from .options import Options
-from .tool import FunctionalTool
+from .tool import Options, FunctionalTool
 
 
 class WandTool(FunctionalTool):

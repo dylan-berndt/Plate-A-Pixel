@@ -3,9 +3,8 @@ import pytest
 from utils.data.canvas import Canvas
 from utils.data.project import Project
 from utils.controllers.projectController import ProjectController
-from utils.tools.tool import Tool, FunctionalTool
+from utils.tools.tool import Tool, FunctionalTool, ToolRegistry
 from utils.tools.wandTool import WandTool
-from utils.tools.registry import ToolRegistry
 from .fixtures import make_pixel_art, RED_BLOCK, RED_ISLAND, GREEN_DIAGONAL_PAIR
 
 

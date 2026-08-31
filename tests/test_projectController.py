@@ -21,20 +21,21 @@ def _spy(signal):
     return calls
 
 
-def test_wand_select_selects_matching_color_and_emits(controller):
+def test_bucket_select_non_contiguous_selects_every_matching_color_and_emits(controller):
     calls = _spy(controller.selectionChanged)
 
-    controller.wandSelect(RED, mode="replace")
+    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
         assert canvas.selection[pos]
+    assert canvas.selection[RED_ISLAND]
     assert len(calls) == 1
 
 
-def test_wand_select_undo_restores_previous_selection(controller):
-    controller.wandSelect(RED, mode="replace")
-    assert controller.project.canvas.selection.sum() == len(RED_BLOCK) + 1  # wand also grabs RED_ISLAND
+def test_bucket_select_undo_restores_previous_selection(controller):
+    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
+    assert controller.project.canvas.selection.sum() == len(RED_BLOCK) + 1
 
     controller.undo()
 
@@ -53,7 +54,7 @@ def test_bucket_select_selects_contiguous_region(controller):
 def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(controller):
     invalidated = _spy(controller.meshInvalidated)
     ready = _spy(controller.meshReady)
-    controller.wandSelect(RED, mode="replace")
+    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
 
     controller.transformSelectionLayer(3)
 
@@ -66,7 +67,7 @@ def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(cont
 
 
 def test_transform_selection_layer_undo_restores_heights_and_rebuilds(controller):
-    controller.wandSelect(RED, mode="replace")
+    controller.bucketSelect((0, 0), contiguous=False, mode="replace")
     controller.transformSelectionLayer(3)
 
     controller.undo()

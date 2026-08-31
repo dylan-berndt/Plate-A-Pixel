@@ -1,3 +1,18 @@
+from dataclasses import dataclass
+
+
+@dataclass
+class Options:
+    """One configurable knob on a Tool, e.g. Wand's "mode" or "contiguous".
+    Purely descriptive - `options` maps a human label to the value it
+    sets - so a UI can build a dropdown/checkbox/slider from this without
+    the Tool itself knowing anything about widgets."""
+
+    name: str
+    optionType: str
+    options: dict
+
+
 class Tool:
     """A tool's own configuration: its option schema (what can be
     changed) and its current selections (what the user has it set to
@@ -34,3 +49,23 @@ class FunctionalTool(Tool):
 
     def onRelease(self, controller, pos):
         pass
+
+
+class ToolRegistry:
+    """The set of available tools and which one is active - what a tool
+    rail and options bar bind to."""
+
+    def __init__(self, tools):
+        self.tools = tools
+        self._activeIndex = 0 if tools else None
+
+    @property
+    def activeTool(self):
+        return self.tools[self._activeIndex] if self._activeIndex is not None else None
+
+    def setActiveTool(self, name):
+        for i, tool in enumerate(self.tools):
+            if tool.name == name:
+                self._activeIndex = i
+                return
+        raise ValueError(f"No tool named '{name}'")
