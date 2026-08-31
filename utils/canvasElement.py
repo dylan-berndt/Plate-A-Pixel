@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from PySide6.QtWidgets import QWidget
 from .ui import *
 from .data import *
 
@@ -16,46 +18,46 @@ class Tool:
     selections: dict
 
 
-class CanvasArea(Element):
+class CanvasArea(QWidget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.wand = Tool("wand", 
-                           {"mode": 
-                            Options("Selection Mode", "dropdown", 
+        self.wand = Tool("wand",
+                           {"mode":
+                            Options("Selection Mode", "dropdown",
                                     {"Addition": "add", "Subtraction": "subtract", "Replacement": "replace", "Intersection": "intersect"}),
-                            "diagonal": 
+                            "diagonal":
                             Options("Use Diagonals", "dropdown",
-                                    {"True": True, "False": False})}, 
+                                    {"True": True, "False": False})},
                            {"mode": "add", "diagonal": True})
-        
+
         self.brushSelect = Tool("brushSelect",
                                 {"size":
-                                 Options("Brush Size", "slider", 
+                                 Options("Brush Size", "slider",
                                          {"Minimum": 1, "Maximum": 35})},
                                 {"size": 4})
-        
+
         self.brush = Tool("brush",
                           {"size":
                            Options("Brush Size", "slider",
                                    {"Minimum": 1, "Maximum": 35})},
                           {"size": 4})
-        
+
         self.tools = [self.wand, self.brushSelect, self.brush]
 
         self.tool = self.wand
 
         # TODO: Create grid and buttons, tools, and artist
 
-    def input(self, inputs: Inputs, state: State):
+    def mousePressEvent(self, event):
         # TODO: Alter state to influence CanvasArtist
         pass
 
-    def render(self, state: State):
+    def paintEvent(self, event):
         pass
 
 
-class CanvasArtist(Element):
+class CanvasArtist(QWidget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -63,8 +65,8 @@ class CanvasArtist(Element):
         self.zoom = 1
         self.position = Vector2(0, 0)
 
-    def input(self, inputs: Inputs, state: State):
+    def mousePressEvent(self, event):
         pass
 
-    def _mouseToCanvas(self, position: Vector2, state: State):
+    def _mouseToCanvas(self, position: Vector2):
         pass

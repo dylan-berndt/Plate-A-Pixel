@@ -1,8 +1,9 @@
+from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from .ui import *
 from .data import *
 
 
-class MeshElement(Element):
+class MeshElement(QOpenGLWidget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -17,9 +18,18 @@ class MeshElement(Element):
     def travel(self, position, delta):
         pass
 
-    def render(self, state: State):
+    # Qt's OpenGL widget calls initializeGL/resizeGL/paintGL on its own
+    # render loop, replacing the manual render(state) call the pygame
+    # Element tree used to make each frame.
+    def initializeGL(self):
+        pass
+
+    def resizeGL(self, w, h):
+        pass
+
+    def paintGL(self):
         if self.mesh is None:
             return
 
-    def input(self, inputs, state: State):
+    def mousePressEvent(self, event):
         pass

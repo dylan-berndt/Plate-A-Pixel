@@ -1,7 +1,6 @@
 import numpy as np
 from PIL import Image
-import tkinter as tk
-from tkinter.filedialog import askopenfilename
+from PySide6.QtWidgets import QFileDialog
 
 
 class Canvas:
@@ -18,7 +17,9 @@ class Canvas:
             self.map[mask] = c
 
         self.baseColor = None
-        self.layers = np.zeros_like(self.map, dtype=np.int32)
+        # -1 means "no pixel placed here yet" (empty space); valid printed
+        # pixels have a height of 1 or more, set later via the height brush.
+        self.layers = np.full_like(self.map, -1, dtype=np.int32)
 
         self.selection = np.zeros_like(self.map, dtype=np.bool)
 
@@ -27,7 +28,10 @@ class Canvas:
         maxScale = 1
         baseImage = image
         xGrid, yGrid = np.meshgrid(np.arange(baseImage.shape[1]), np.arange(baseImage.shape[0]))
-        for i in range(2, 17):
+        for i in range(2, 101):
+            if image.shape[0] // i != image.shape[0] / i or image.shape[1] // i != image.shape[1] / i:
+                continue
+
             if i >= image.shape[0] or i >= image.shape[1]:
                 break
             
@@ -61,17 +65,21 @@ class Canvas:
         return baseImage, maxScale
 
 
+    # Image import for now; the "PNG Files" filter is the one entry point
+    # a future custom project format (e.g. "*.pap") would extend alongside.
     @staticmethod
-    def loadNewCanvas():
-        root = tk.Tk()
-        root.withdraw()
-
-        filePath = askopenfilename(filetypes=[("PNG Files", "*.png")])
+    def loadNewCanvas(parent=None):
+        filePath, _ = QFileDialog.getOpenFileName(parent, "Import Image", "", "PNG Files (*.png)")
+        if not filePath:
+            return None
         return Canvas.fromFilePath(filePath)
 
     @staticmethod
     def fromFilePath(filePath: str):
-        image = np.array(Image.open(filePath))
+        # Force RGB regardless of the source PNG's actual mode (grayscale,
+        # palette-indexed, RGBA, ...) - detectScale and the rest of Canvas
+        # assume a 3-channel (H, W, 3) array throughout.
+        image = np.array(Image.open(filePath).convert("RGB"))
         return Canvas(image)
 
     def positionValid(self, position):
@@ -124,7 +132,16 @@ class Canvas:
         else:
             raise NotImplementedError("You Goober")
 
-    def bucketSelect(self, position, mode, contiguous, diagonal):
+    def wandSelect(self, color, mode="replace"):
+        if len(color) == 3:
+            value = max([(range(len(self.palette))[i] if np.all(self.palette[i] == color) else 0) for i in range(len(self.palette))])
+        else:
+            value = color
+        newSelection = self.map == value
+        self.alterSelection(newSelection, mode)
+        return
+
+    def bucketSelect(self, position, contiguous=True, diagonal=False, mode="replace"):
         value = self.map[position]
 
         if not contiguous:
@@ -140,17 +157,22 @@ class Canvas:
             check = self.validNeighbors(queue[0], diagonal)
 
             for pos in check:
-                if self.map[pos] == value:
-                    if not self.selection[pos] and not newSelection[pos]:
-                        newSelection[pos] = 1
-                        queue.append(pos)
+                if self.map[pos] == value and not newSelection[pos]:
+                    newSelection[pos] = 1
+                    queue.append(pos)
 
             queue = queue[1:]
 
         self.alterSelection(newSelection, mode)
 
+    def transformSelection(self, direction=1):
+        self.layers[self.selection] += direction
+
 
 
 if __name__ == "__main__":
+    import sys
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
     canvas = Canvas.loadNewCanvas()
-        
