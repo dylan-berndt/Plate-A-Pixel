@@ -1,5 +1,6 @@
 from ..tools.tool import ToolRegistry
 from ..tools.wandTool import WandTool
+from ..tools.brushSelectTool import BrushSelectTool
 
 
 class ToolController:
@@ -8,16 +9,22 @@ class ToolController:
     the selected tool and its options (e.g. "contiguous" on) persist
     across tabs, like a normal image editor's tool state does.
 
-    Each dispatch resolves AppController's *current* activeController and
-    hands it to the tool directly - the tool never stores a controller
-    itself, since the active project can change out from under a
-    selected tool on a tab switch."""
+    A press/drag/.../release sequence is one gesture: press resolves and
+    holds onto whichever ProjectController is active at that moment and
+    brackets the whole sequence in beginGesture()/endGesture() so it
+    undoes as one step, and every call in between - even if the active
+    tab somehow changes mid-drag - keeps targeting that same controller
+    rather than re-resolving a possibly different one."""
 
     def __init__(self, appController):
         self.appController = appController
-        self.registry = ToolRegistry([WandTool()])
+        self.registry = ToolRegistry([WandTool(), BrushSelectTool()])
+        self._gestureController = None
 
     def press(self, pos):
+        self._gestureController = self.appController.activeController
+        if self._gestureController is not None:
+            self._gestureController.beginGesture()
         self._dispatch("onPress", pos)
 
     def drag(self, pos):
@@ -25,10 +32,13 @@ class ToolController:
 
     def release(self, pos):
         self._dispatch("onRelease", pos)
+        if self._gestureController is not None:
+            self._gestureController.endGesture()
+        self._gestureController = None
 
     def _dispatch(self, handlerName, pos):
         tool = self.registry.activeTool
-        controller = self.appController.activeController
+        controller = self._gestureController or self.appController.activeController
         if tool is None or controller is None:
             return
         getattr(tool, handlerName)(controller, pos)

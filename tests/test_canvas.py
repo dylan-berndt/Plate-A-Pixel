@@ -120,3 +120,30 @@ def test_invalid_mode_raises():
 def test_valid_neighbors_at_corner_respects_canvas_bounds(canvas):
     assert len(canvas.validNeighbors((0, 0), diagonal=False)) == 2
     assert len(canvas.validNeighbors((0, 0), diagonal=True)) == 3
+
+
+def test_brush_select_grabs_every_cell_within_radius_regardless_of_color(canvas):
+    canvas.brushSelect((0, 0), radius=1, mode="replace")
+
+    assert canvas.selection[0, 0]
+    assert canvas.selection[0, 1]
+    assert canvas.selection[1, 0]
+    assert not canvas.selection[1, 1]  # sqrt(2) > 1
+    assert canvas.selection.sum() == 3
+
+
+def test_brush_select_radius_zero_selects_only_the_center_cell(canvas):
+    canvas.brushSelect((2, 2), radius=0, mode="replace")
+
+    assert canvas.selection.sum() == 1
+    assert canvas.selection[2, 2]
+
+
+def test_brush_select_add_mode_unions_with_the_existing_selection(canvas):
+    canvas.brushSelect((0, 0), radius=0, mode="replace")
+
+    canvas.brushSelect((5, 5), radius=0, mode="add")
+
+    assert canvas.selection.sum() == 2
+    assert canvas.selection[0, 0]
+    assert canvas.selection[5, 5]

@@ -181,6 +181,15 @@ class Canvas:
 
         self.alterSelection(newSelection, mode)
 
+    def brushSelect(self, position, radius, mode="replace"):
+        """Every cell within `radius` of `position` (Euclidean, in grid
+        cells) - color-blind, unlike wandSelect/bucketSelect, since a
+        brush stamps an area rather than picking out one color."""
+        y, x = position
+        yGrid, xGrid = np.ogrid[:self.map.shape[0], :self.map.shape[1]]
+        newSelection = (yGrid - y) ** 2 + (xGrid - x) ** 2 <= radius ** 2
+        self.alterSelection(newSelection, mode)
+
     def transformSelection(self, direction=1):
         self.layers[self.selection] += direction
 

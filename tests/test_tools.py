@@ -5,6 +5,7 @@ from utils.data.project import Project
 from utils.controllers.projectController import ProjectController
 from utils.tools.tool import Tool, FunctionalTool, ToolRegistry
 from utils.tools.wandTool import WandTool
+from utils.tools.brushSelectTool import BrushSelectTool
 from .fixtures import make_pixel_art, RED_BLOCK, RED_ISLAND, GREEN_DIAGONAL_PAIR
 
 
@@ -66,6 +67,48 @@ def test_wand_tool_press_respects_diagonal_option(controller):
     canvas = controller.project.canvas
     assert canvas.selection[GREEN_DIAGONAL_PAIR[0]]
     assert not canvas.selection[GREEN_DIAGONAL_PAIR[1]]
+
+
+def test_brush_select_tool_press_stamps_a_selection_around_the_position(controller):
+    tool = BrushSelectTool()
+    tool.selections["size"] = 1
+
+    tool.onPress(controller, (0, 0))
+
+    canvas = controller.project.canvas
+    assert canvas.selection[0, 0]
+    assert canvas.selection[0, 1]
+    assert canvas.selection[1, 0]
+    assert not canvas.selection[1, 1]
+
+
+def test_brush_select_tool_drag_adds_to_the_selection(controller):
+    tool = BrushSelectTool()
+    tool.selections["size"] = 0
+    tool.selections["mode"] = "add"
+
+    tool.onPress(controller, (0, 0))
+    tool.onDrag(controller, (5, 5))
+
+    canvas = controller.project.canvas
+    assert canvas.selection[0, 0]
+    assert canvas.selection[5, 5]
+    assert canvas.selection.sum() == 2
+
+
+def test_brush_select_tool_drag_after_a_replace_press_still_builds_up_the_stroke(controller):
+    tool = BrushSelectTool()
+    tool.selections["size"] = 0
+    tool.selections["mode"] = "replace"
+
+    tool.onPress(controller, (0, 0))
+    tool.onDrag(controller, (5, 5))
+
+    # a naive "replace" on every sample would leave only (5, 5) selected
+    canvas = controller.project.canvas
+    assert canvas.selection[0, 0]
+    assert canvas.selection[5, 5]
+    assert canvas.selection.sum() == 2
 
 
 def test_tool_registry_defaults_to_the_first_tool():

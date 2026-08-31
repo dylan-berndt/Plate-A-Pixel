@@ -18,6 +18,12 @@ class ProjectController(QObject):
     a snapshot and restore it wholesale, then just re-emit everything
     rather than tracking what specifically changed.
 
+    A multi-call gesture (a tool's onPress/onDrag/.../onRelease sequence)
+    should undo as one step, not one step per call - beginGesture()/
+    endGesture() bracket that: only the first _pushUndo() inside a
+    gesture actually pushes a snapshot, so a drag calling bucketSelect
+    fifty times still costs one undo entry.
+
     Mesh recomputation is synchronous: any edit that can change mesh
     geometry rebuilds it immediately and emits meshReady before the call
     returns - no debouncing or worker thread yet, so a large image's
@@ -37,8 +43,20 @@ class ProjectController(QObject):
         self.project = project
         self._undoStack = []
         self._redoStack = []
+        self._gestureDepth = 0
 
     # -- undo/redo ------------------------------------------------------
+
+    def beginGesture(self):
+        """Start a multi-call gesture: pushes one undo snapshot now (if
+        not already inside a gesture) and suppresses _pushUndo() until a
+        matching endGesture()."""
+        if self._gestureDepth == 0:
+            self._pushUndoNow()
+        self._gestureDepth += 1
+
+    def endGesture(self):
+        self._gestureDepth = max(0, self._gestureDepth - 1)
 
     def _snapshot(self):
         canvas = self.project.canvas
@@ -58,6 +76,11 @@ class ProjectController(QObject):
         self.viewSettingsChanged.emit()
 
     def _pushUndo(self):
+        if self._gestureDepth > 0:
+            return
+        self._pushUndoNow()
+
+    def _pushUndoNow(self):
         self._undoStack.append(self._snapshot())
         self._redoStack.clear()
 
@@ -78,6 +101,11 @@ class ProjectController(QObject):
     def bucketSelect(self, pos, contiguous=True, diagonal=False, mode="replace"):
         self._pushUndo()
         self.project.canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)
+        self.selectionChanged.emit()
+
+    def brushSelect(self, pos, radius, mode="replace"):
+        self._pushUndo()
+        self.project.canvas.brushSelect(pos, radius, mode=mode)
         self.selectionChanged.emit()
 
     # -- height (mesh-affecting) ----------------------------------------

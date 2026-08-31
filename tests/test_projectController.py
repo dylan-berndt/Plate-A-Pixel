@@ -160,3 +160,45 @@ def test_recolor_color_undo_reverts(controller):
     controller.undo()
 
     assert controller.project.canvas.palette[index].color == RED
+
+
+def test_brush_select_selects_and_emits(controller):
+    calls = _spy(controller.selectionChanged)
+
+    controller.brushSelect((0, 0), radius=1, mode="replace")
+
+    assert controller.project.canvas.selection.sum() == 3
+    assert len(calls) == 1
+
+
+def test_gesture_collapses_repeated_edits_into_one_undo_step(controller):
+    controller.beginGesture()
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.brushSelect((0, 1), radius=0, mode="add")
+    controller.brushSelect((1, 0), radius=0, mode="add")
+    controller.endGesture()
+
+    assert controller.project.canvas.selection.sum() == 3
+    assert len(controller._undoStack) == 1
+
+    controller.undo()
+
+    assert controller.project.canvas.selection.sum() == 0
+
+
+def test_calls_outside_a_gesture_each_push_their_own_undo_step(controller):
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.brushSelect((0, 1), radius=0, mode="add")
+
+    assert len(controller._undoStack) == 2
+
+
+def test_nested_gesture_calls_only_push_one_snapshot(controller):
+    controller.beginGesture()
+    controller.beginGesture()
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.endGesture()
+    controller.brushSelect((0, 1), radius=0, mode="add")  # still inside the outer gesture
+    controller.endGesture()
+
+    assert len(controller._undoStack) == 1
