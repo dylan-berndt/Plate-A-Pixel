@@ -99,3 +99,24 @@ def test_export_objs_uses_cell_width_and_height_as_independent_axis_scales(tmp_p
     content = open(paths[0]).read()
     assert f"{project.viewSettings.cellWidth}" in content
     assert f"{project.viewSettings.cellHeight}" in content
+
+
+def test_new_project_has_no_file_path(project):
+    assert project.filePath is None
+
+
+def test_save_records_the_file_path(tmp_path, project):
+    path = str(tmp_path / "test.pap")
+
+    project.save(path)
+
+    assert project.filePath == path
+
+
+def test_load_records_the_file_path(tmp_path, project):
+    path = str(tmp_path / "test.pap")
+    project.save(path)
+
+    restored = Project.load(path)
+
+    assert restored.filePath == path

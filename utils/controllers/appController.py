@@ -22,7 +22,7 @@ class AppController(QObject):
         super().__init__(parent)
         self.projectControllers = []
         self._activeIndex = None
-        self.toolController = ToolController(self)
+        self.toolController = ToolController(self, parent=self)
 
     @property
     def activeController(self):
@@ -58,10 +58,17 @@ class AppController(QObject):
             elif self._activeIndex > index:
                 self._activeIndex -= 1
 
+        # A running QThread must not be destroyed out from under itself -
+        # Qt aborts the process ("Destroyed while thread is still
+        # running") if that happens, so block briefly here rather than
+        # risk a crash on close.
+        if controller._meshWorker is not None:
+            controller._meshWorker.wait()
+
         self.projectClosed.emit(controller)
         controller.setParent(None)
 
-    def saveActiveProject(self, filePath):
+    def saveActiveProject(self, filePath=None):
         if self.activeController is None:
             raise RuntimeError("No active project to save.")
-        self.activeController.project.save(filePath)
+        self.activeController.save(filePath)

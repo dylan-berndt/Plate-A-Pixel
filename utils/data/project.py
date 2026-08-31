@@ -51,10 +51,14 @@ class Project:
     generation and export scale. This is "one tab" - an app hosting several
     open projects just holds a list of these."""
 
-    def __init__(self, canvas: Canvas, viewSettings: ViewSettings = None, name: str = "Untitled"):
+    def __init__(self, canvas: Canvas, viewSettings: ViewSettings = None, name: str = "Untitled", filePath: str = None):
         self.name = name
         self.canvas = canvas
         self.viewSettings = viewSettings or ViewSettings()
+        # Where this project was last loaded from or saved to - None for a
+        # project that's never been saved. Lets a plain "Save" default to
+        # this path instead of always requiring "Save As" behavior.
+        self.filePath = filePath
         self.mesh = Mesh()
         self._syncMeshSettings()
 
@@ -112,6 +116,8 @@ class Project:
 
             zf.writestr("project.json", json.dumps(metadata, indent=2))
 
+        self.filePath = filePath
+
     @staticmethod
     def load(filePath):
         """The inverse of save(): reopens a *.pap file, rebuilding the
@@ -134,4 +140,4 @@ class Project:
         palette = Palette.from_dict(metadata["palette"])
         canvas = Canvas(image, scale=metadata["scale"], palette=palette, layers=layers)
         viewSettings = ViewSettings.from_dict(metadata["viewSettings"])
-        return Project(canvas, viewSettings=viewSettings, name=metadata.get("name", "Untitled"))
+        return Project(canvas, viewSettings=viewSettings, name=metadata.get("name", "Untitled"), filePath=filePath)

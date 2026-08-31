@@ -23,6 +23,22 @@ def test_app_controller_owns_a_tool_controller_with_the_wand_tool_active(app):
     assert app.toolController.registry.activeTool.name == "wand"
 
 
+def test_set_active_tool_switches_the_registry_and_emits(app):
+    calls = []
+    app.toolController.activeToolChanged.connect(lambda tool: calls.append(tool))
+
+    app.toolController.setActiveTool("brushSelect")
+
+    assert app.toolController.registry.activeTool.name == "brushSelect"
+    assert len(calls) == 1
+    assert calls[0] is app.toolController.registry.activeTool
+
+
+def test_set_active_tool_rejects_an_unknown_name(app):
+    with pytest.raises(ValueError):
+        app.toolController.setActiveTool("nonexistent")
+
+
 def test_press_dispatches_to_the_active_project(app):
     app.toolController.registry.activeTool.selections["contiguous"] = False
 

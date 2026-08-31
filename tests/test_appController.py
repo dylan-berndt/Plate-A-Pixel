@@ -110,3 +110,21 @@ def test_save_active_project_writes_the_active_project(app, imagePath, tmp_path)
     app.saveActiveProject(str(savePath))
 
     assert savePath.exists()
+
+
+def test_save_active_project_with_no_path_reuses_the_last_saved_path(app, imagePath, tmp_path):
+    app.newProjectFromImage(imagePath)
+    savePath = tmp_path / "out.pap"
+    app.saveActiveProject(str(savePath))
+
+    app.activeController.recolorColor(0, (1, 2, 3))
+    app.saveActiveProject()  # plain "Save" - no path given
+
+    assert app.activeController.isDirty is False
+
+
+def test_save_active_project_with_no_path_and_never_saved_raises(app, imagePath):
+    app.newProjectFromImage(imagePath)
+
+    with pytest.raises(ValueError):
+        app.saveActiveProject()

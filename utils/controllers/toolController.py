@@ -1,9 +1,11 @@
+from PySide6.QtCore import QObject, Signal
+
 from ..tools.tool import ToolRegistry
 from ..tools.wandTool import WandTool
 from ..tools.brushSelectTool import BrushSelectTool
 
 
-class ToolController:
+class ToolController(QObject):
     """Owns the ToolRegistry and routes canvas press/drag/release events
     to the active tool. Lives on AppController, not ProjectController -
     the selected tool and its options (e.g. "contiguous" on) persist
@@ -16,10 +18,17 @@ class ToolController:
     tab somehow changes mid-drag - keeps targeting that same controller
     rather than re-resolving a possibly different one."""
 
-    def __init__(self, appController):
+    activeToolChanged = Signal(object)  # Tool
+
+    def __init__(self, appController, parent=None):
+        super().__init__(parent)
         self.appController = appController
         self.registry = ToolRegistry([WandTool(), BrushSelectTool()])
         self._gestureController = None
+
+    def setActiveTool(self, name):
+        self.registry.setActiveTool(name)
+        self.activeToolChanged.emit(self.registry.activeTool)
 
     def press(self, pos):
         self._gestureController = self.appController.activeController

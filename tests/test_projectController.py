@@ -5,14 +5,19 @@ from utils.data.canvas import Canvas
 from utils.data.project import Project, ViewSettings
 from utils.data.mesh import Mesh
 from utils.controllers.projectController import ProjectController
+from utils.controllers.canvasController import CanvasController
 from .fixtures import make_pixel_art, RED, RED_BLOCK, RED_ISLAND
+from .conftest import waitForMeshWorker
 
 
 @pytest.fixture
 def controller():
     canvas = Canvas(make_pixel_art())
     project = Project(canvas, viewSettings=ViewSettings(hollow=False, baseMargin=0))
-    return ProjectController(project)
+    c = ProjectController(project)
+    yield c
+    if c._meshWorker is not None:
+        c._meshWorker.wait()  # don't leave a running QThread dangling past the test
 
 
 def _spy(signal):
@@ -57,6 +62,7 @@ def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(cont
     controller.bucketSelect((0, 0), contiguous=False, mode="replace")
 
     controller.transformSelectionLayer(3)
+    waitForMeshWorker(controller)
 
     canvas = controller.project.canvas
     for pos in RED_BLOCK:
@@ -69,6 +75,7 @@ def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(cont
 def test_transform_selection_layer_undo_restores_heights_and_rebuilds(controller):
     controller.bucketSelect((0, 0), contiguous=False, mode="replace")
     controller.transformSelectionLayer(3)
+    waitForMeshWorker(controller)  # let that rebuild settle before triggering another
 
     controller.undo()
 
@@ -81,6 +88,7 @@ def test_set_hollow_updates_view_settings_and_rebuilds_mesh(controller):
     ready = _spy(controller.meshReady)
 
     controller.setHollow(True)
+    waitForMeshWorker(controller)
 
     assert controller.project.viewSettings.hollow is True
     assert len(ready) == 1
@@ -88,6 +96,8 @@ def test_set_hollow_updates_view_settings_and_rebuilds_mesh(controller):
 
 def test_set_hollow_undo_reverts(controller):
     controller.setHollow(True)
+    waitForMeshWorker(controller)
+
     controller.undo()
 
     assert controller.project.viewSettings.hollow is False
@@ -97,6 +107,7 @@ def test_set_margin_updates_view_settings_and_rebuilds_mesh(controller):
     ready = _spy(controller.meshReady)
 
     controller.setMargin(2)
+    waitForMeshWorker(controller)
 
     assert controller.project.viewSettings.baseMargin == 2
     assert len(ready) == 1
@@ -202,3 +213,71 @@ def test_nested_gesture_calls_only_push_one_snapshot(controller):
     controller.endGesture()
 
     assert len(controller._undoStack) == 1
+
+
+def test_can_undo_and_can_redo_reflect_the_stacks(controller):
+    assert controller.canUndo is False
+    assert controller.canRedo is False
+
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    assert controller.canUndo is True
+    assert controller.canRedo is False
+
+    controller.undo()
+    assert controller.canUndo is False
+    assert controller.canRedo is True
+
+    controller.redo()
+    assert controller.canUndo is True
+    assert controller.canRedo is False
+
+
+def test_new_controller_is_not_dirty(controller):
+    assert controller.isDirty is False
+
+
+def test_an_edit_marks_the_controller_dirty(controller):
+    controller.brushSelect((0, 0), radius=0, mode="add")
+
+    assert controller.isDirty is True
+
+
+def test_undo_also_marks_the_controller_dirty(controller, tmp_path):
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.save(str(tmp_path / "test.pap"))
+    assert controller.isDirty is False
+
+    controller.undo()
+
+    assert controller.isDirty is True
+
+
+def test_save_without_a_path_or_prior_save_raises(controller):
+    with pytest.raises(ValueError):
+        controller.save()
+
+
+def test_save_writes_to_the_given_path_and_clears_dirty(controller, tmp_path):
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    assert controller.isDirty is True
+    path = str(tmp_path / "test.pap")
+
+    controller.save(path)
+
+    assert controller.isDirty is False
+    assert controller.project.filePath == path
+
+
+def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
+    path = str(tmp_path / "test.pap")
+    controller.save(path)
+
+    controller.brushSelect((0, 0), radius=0, mode="add")
+    controller.save()
+
+    assert controller.isDirty is False
+
+
+def test_project_controller_owns_a_canvas_controller(controller):
+    assert isinstance(controller.canvasController, CanvasController)
+    assert controller.canvasController.project is controller.project
