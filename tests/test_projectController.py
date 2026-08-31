@@ -50,28 +50,6 @@ def test_bucket_select_selects_contiguous_region(controller):
     assert not canvas.selection[RED_ISLAND]
 
 
-def test_apply_tool_wand_matches_direct_wand_select(controller):
-    controller.applyTool("wand", (0, 0), mode="replace")
-
-    canvas = controller.project.canvas
-    for pos in RED_BLOCK:
-        assert canvas.selection[pos]
-
-
-def test_apply_tool_bucket_matches_direct_bucket_select(controller):
-    controller.applyTool("bucket", (0, 0), mode="replace", contiguous=True, diagonal=True)
-
-    canvas = controller.project.canvas
-    for pos in RED_BLOCK:
-        assert canvas.selection[pos]
-    assert not canvas.selection[RED_ISLAND]
-
-
-def test_apply_tool_rejects_an_unknown_tool_name(controller):
-    with pytest.raises(ValueError):
-        controller.applyTool("nonexistent", (0, 0))
-
-
 def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(controller):
     invalidated = _spy(controller.meshInvalidated)
     ready = _spy(controller.meshReady)

@@ -2,14 +2,17 @@ from PySide6.QtCore import QObject, Signal
 
 from ..data.project import Project
 from .projectController import ProjectController
+from .toolController import ToolController
 
 
 class AppController(QObject):
     """Owns the list of open projects (each wrapped in its own
-    ProjectController) and which one is active - "the tabs." Nothing here
-    touches a QWidget or a menu; routing actual File/Edit/View menu
-    actions to the active ProjectController is a UI-layer concern for
-    whatever eventually builds the menu bar."""
+    ProjectController) and which one is active - "the tabs" - plus the
+    single ToolController shared across all of them, since the selected
+    tool and its options persist across tabs rather than belonging to any
+    one project. Nothing here touches a QWidget or a menu; routing actual
+    File/Edit/View menu actions to the active ProjectController is a
+    UI-layer concern for whatever eventually builds the menu bar."""
 
     projectOpened = Signal(object)         # ProjectController
     projectClosed = Signal(object)         # ProjectController
@@ -19,6 +22,7 @@ class AppController(QObject):
         super().__init__(parent)
         self.projectControllers = []
         self._activeIndex = None
+        self.toolController = ToolController(self)
 
     @property
     def activeController(self):

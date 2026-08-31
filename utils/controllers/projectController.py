@@ -23,10 +23,8 @@ class ProjectController(QObject):
     returns - no debouncing or worker thread yet, so a large image's
     recompute (~0.6s) blocks whatever thread calls the slot.
 
-    applyTool exists only as a placeholder until a real Tool/ToolRegistry
-    layer exists (see ARCHITECTURE.md's tool-layer proposal) - it dispatches
-    a bare tool-name string to the selection methods already implemented
-    below, and will be replaced once Tool objects exist."""
+    Canvas interaction (turning a click into one of the calls below)
+    isn't this class's job - see ToolController and Tool in ..tools."""
 
     selectionChanged = Signal()
     paletteChanged = Signal()
@@ -89,16 +87,6 @@ class ProjectController(QObject):
         self._pushUndo()
         self.project.canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)
         self.selectionChanged.emit()
-
-    def applyTool(self, toolName, pos, mode="replace", **kwargs):
-        if toolName == "wand":
-            canvas = self.project.canvas
-            color = tuple(canvas.palette.colors[canvas.map[pos]])
-            self.wandSelect(color, mode=mode)
-        elif toolName == "bucket":
-            self.bucketSelect(pos, mode=mode, **kwargs)
-        else:
-            raise ValueError(f"Unknown tool '{toolName}' - no Tool layer exists yet to define custom tools.")
 
     # -- height (mesh-affecting) ----------------------------------------
 
