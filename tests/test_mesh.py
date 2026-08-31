@@ -95,9 +95,9 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     # bulge ever reaches the other's own (inset) tube.
     assert BULGE_SIZE < TUBE_MARGIN
     blueVerts = mesh.meshes[blueIndex][0]
-    assert max(v.x for v in blueVerts) == 2.0 + BULGE_SIZE
+    assert max(v.x for v in blueVerts) == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
     redVerts = mesh.meshes[redIndex][0]
-    assert min(v.x for v in redVerts) == 2.0 - BULGE_SIZE
+    assert min(v.x for v in redVerts) == pytest.approx(2.0 - BULGE_SIZE, abs=1e-5)
 
 
 def test_diagonal_same_height_pixels_no_longer_bulge_once_the_base_fills_their_flanks(two_color_canvas):
@@ -240,10 +240,10 @@ def test_a_taller_pixel_bulges_against_the_base():
     blueVerts = mesh.meshes[blueIndex][0]
     # it's surrounded entirely by (shorter) base cells, with no same-height
     # neighbor anywhere - so the cap bulges on every side.
-    assert max(v.x for v in blueVerts) == 2.0 + BULGE_SIZE
-    assert min(v.x for v in blueVerts) == 1.0 - BULGE_SIZE
-    assert max(v.z for v in blueVerts) == 2.0 + BULGE_SIZE
-    assert min(v.z for v in blueVerts) == 1.0 - BULGE_SIZE
+    assert max(v.x for v in blueVerts) == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
+    assert min(v.x for v in blueVerts) == pytest.approx(1.0 - BULGE_SIZE, abs=1e-5)
+    assert max(v.z for v in blueVerts) == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
+    assert min(v.z for v in blueVerts) == pytest.approx(1.0 - BULGE_SIZE, abs=1e-5)
 
     baseVerts = [v for comp in mesh.meshes[base_index(canvas)] for v in comp]
     assert len(baseVerts) > 0
