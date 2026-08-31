@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from PIL import Image
 
 from utils.data.canvas import Canvas
 from utils.data.project import Project, ViewSettings
@@ -15,6 +16,25 @@ def project():
     canvas.palette.rename(canvas.palette.indexOf((220, 40, 40)), "Red")
     viewSettings = ViewSettings(hollow=True, baseMargin=2, cellWidth=8.0, cellHeight=2.5)
     return Project(canvas, viewSettings=viewSettings, name="Test Project")
+
+
+def test_from_image_path_names_the_project_after_the_file(tmp_path):
+    path = tmp_path / "my_sprite.png"
+    Image.fromarray(make_pixel_art()).save(path)
+
+    project = Project.fromImagePath(str(path))
+
+    assert project.name == "my_sprite"
+    assert len(project.canvas.palette) == 3
+
+
+def test_from_image_path_name_is_overridable(tmp_path):
+    path = tmp_path / "my_sprite.png"
+    Image.fromarray(make_pixel_art()).save(path)
+
+    project = Project.fromImagePath(str(path), name="Custom Name")
+
+    assert project.name == "Custom Name"
 
 
 def test_rebuild_mesh_produces_a_mesh_for_every_palette_color_plus_base(project):

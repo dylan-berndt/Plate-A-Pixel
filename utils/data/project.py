@@ -71,26 +71,28 @@ class Project:
         self.mesh._calculateMesh()
         return self.mesh
 
-    def exportObjs(self, outputDir):
-        """Rebuilds the mesh if needed and writes one OBJ per component,
-        scaled by this project's cellWidth (X/Z) and cellHeight (Y)."""
-        self.rebuildMesh()
-        scale = (self.viewSettings.cellWidth, self.viewSettings.cellHeight, self.viewSettings.cellWidth)
-        return exportMeshObjs(self.mesh, outputDir, scale=scale)
-
     @staticmethod
-    def newFromImagePath(filePath, name=None):
+    def fromImagePath(filePath, name=None):
+        """A new Project around a fresh image import, named after the file
+        (minus extension) unless `name` is given."""
         canvas = Canvas.fromFilePath(filePath)
         projectName = name or os.path.splitext(os.path.basename(filePath))[0]
         return Project(canvas, name=projectName)
 
+    def exportObjs(self, outputDir):
+        """Rebuilds the mesh if needed and writes one OBJ per component,
+        scaled by this project's cellWidth (X/Z) and cellHeight (Y)."""
+        self.rebuildMesh()
+        return exportMeshObjs(
+            self.mesh, outputDir, cellWidth=self.viewSettings.cellWidth, cellHeight=self.viewSettings.cellHeight
+        )
+
     def save(self, filePath):
         """Writes this project to a single *.pap file: a zip bundle of the
         canvas's (already scale-reduced) image, its height grid, and a
-        JSON sidecar with the palette (colors, names) and
-        view settings. That's everything Canvas.fromSaved needs to
-        reconstruct the exact same canvas - and everything Mesh needs to
-        rebuild the exact same mesh - on load."""
+        JSON sidecar with the palette (colors, names) and view settings.
+        That's everything Canvas needs to reconstruct the same canvas -
+        and everything Mesh needs to rebuild the same mesh - on load."""
         metadata = {
             "formatVersion": FORMAT_VERSION,
             "name": self.name,
@@ -113,11 +115,11 @@ class Project:
     @staticmethod
     def load(filePath):
         """The inverse of save(): reopens a *.pap file, rebuilding the
-        Canvas via fromSaved (so pixels are matched against the palette
-        that was actually saved, not re-derived from the image) and a
-        fresh Project around it. Selection, active tool, and undo history
-        are intentionally not part of the format - a reload always starts
-        clean."""
+        Canvas from its saved pieces (so pixels are matched against the
+        palette that was actually saved, not re-derived from the image)
+        and a fresh Project around it. Selection, active tool, and undo
+        history are intentionally not part of the format - a reload
+        always starts clean."""
         with zipfile.ZipFile(filePath, "r") as zf:
             metadata = json.loads(zf.read("project.json"))
             if metadata["formatVersion"] > FORMAT_VERSION:
@@ -130,6 +132,6 @@ class Project:
             layers = np.load(io.BytesIO(zf.read("layers.npy")))
 
         palette = Palette.from_dict(metadata["palette"])
-        canvas = Canvas.fromSaved(image, metadata["scale"], palette, layers)
+        canvas = Canvas(image, scale=metadata["scale"], palette=palette, layers=layers)
         viewSettings = ViewSettings.from_dict(metadata["viewSettings"])
         return Project(canvas, viewSettings=viewSettings, name=metadata.get("name", "Untitled"))

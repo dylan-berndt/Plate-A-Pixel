@@ -111,24 +111,17 @@ def test_write_obj_scales_coordinates_to_millimeters_by_default(tmp_path):
     assert coords == [MM_PER_UNIT, 0.0, 0.0]
 
 
-def test_write_obj_scale_is_overridable(tmp_path):
-    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]
+def test_write_obj_cell_width_and_height_are_independently_overridable(tmp_path):
+    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 1), Vector3(0, 1, 0)]
     path = tmp_path / "tri.obj"
 
-    writeObj(triangles, str(path), scale=2.0)
+    writeObj(triangles, str(path), cellWidth=2.0, cellHeight=5.0)
 
-    coords = [float(tok) for tok in _vertexLines(path)[1].split()[1:]]  # the (1,0,0) vertex
-    assert coords == [2.0, 0.0, 0.0]
-
-
-def test_write_obj_scales_axes_independently_given_a_triple(tmp_path):
-    triangles = [Vector3(1, 1, 1), Vector3(0, 0, 0), Vector3(0, 0, 0)]
-    path = tmp_path / "tri.obj"
-
-    writeObj(triangles, str(path), scale=(2.0, 3.0, 5.0))
-
-    coords = [float(tok) for tok in _vertexLines(path)[0].split()[1:]]  # the (1,1,1) vertex
-    assert coords == [2.0, 3.0, 5.0]
+    lines = _vertexLines(path)
+    footprintCoords = [float(tok) for tok in lines[1].split()[1:]]  # (1,0,1): X/Z scaled by cellWidth
+    heightCoords = [float(tok) for tok in lines[2].split()[1:]]     # (0,1,0): Y scaled by cellHeight
+    assert footprintCoords == [2.0, 0.0, 2.0]
+    assert heightCoords == [0.0, 5.0, 0.0]
 
 
 def test_export_mesh_objs_skips_empty_components(tmp_path):
