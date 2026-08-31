@@ -3,6 +3,7 @@ import numpy as np
 from utils.data.canvas import Canvas
 from utils.data.mesh import Mesh
 from utils.data.objExport import exportMeshObjs, writeObj, MM_PER_UNIT
+from utils.data.palette import Palette
 from utils.data.vector import Vector3
 
 
@@ -120,9 +121,19 @@ def test_write_obj_scale_is_overridable(tmp_path):
     assert coords == [2.0, 0.0, 0.0]
 
 
+def test_write_obj_scales_axes_independently_given_a_triple(tmp_path):
+    triangles = [Vector3(1, 1, 1), Vector3(0, 0, 0), Vector3(0, 0, 0)]
+    path = tmp_path / "tri.obj"
+
+    writeObj(triangles, str(path), scale=(2.0, 3.0, 5.0))
+
+    coords = [float(tok) for tok in _vertexLines(path)[0].split()[1:]]  # the (1,1,1) vertex
+    assert coords == [2.0, 3.0, 5.0]
+
+
 def test_export_mesh_objs_skips_empty_components(tmp_path):
     class FakeCanvas:
-        palette = [(30, 30, 200)]
+        palette = Palette([(30, 30, 200)])
 
     class FakeMesh:
         canvas = FakeCanvas()

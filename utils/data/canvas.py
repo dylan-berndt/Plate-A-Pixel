@@ -2,26 +2,58 @@ import numpy as np
 from PIL import Image
 from PySide6.QtWidgets import QFileDialog
 
+from .palette import Palette
+
 
 class Canvas:
-    def __init__(self, image: np.array):
-        # TODO: Evaluate using map instead of raw image
-        self.image, self.scale = Canvas.detectScale(image)
+    def __init__(self, image: np.array, scale: int = None, palette: Palette = None, layers: np.array = None):
+        """Builds a Canvas from a raw image by default (auto-detecting scale
+        and the palette from the image's own unique colors). `scale`,
+        `palette` and `layers` let a caller (Project.load, via fromSaved)
+        supply all three explicitly instead - reconstructing the exact
+        same canvas a save captured, rather than re-deriving it."""
+        if scale is None:
+            self.image, self.scale = Canvas.detectScale(image)
+        else:
+            self.image, self.scale = image, scale
 
-        self.palette = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
+        if palette is None:
+            uniqueColors = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
+            palette = Palette(uniqueColors)
+        self.palette = palette
 
-        layerShape = self.image.shape[:-1]
-        self.map = np.zeros(layerShape, dtype=np.int32)
-        for c, color in enumerate(self.palette):
-            mask = np.all(self.image == color, axis=-1)
-            self.map[mask] = c
+        self.map = Canvas._buildMap(self.image, self.palette.colors)
 
         self.baseColor = None
         # -1 means "no pixel placed here yet" (empty space); valid printed
         # pixels have a height of 1 or more, set later via the height brush.
-        self.layers = np.full_like(self.map, -1, dtype=np.int32)
+        self.layers = layers if layers is not None else np.full_like(self.map, -1, dtype=np.int32)
 
         self.selection = np.zeros_like(self.map, dtype=np.bool)
+
+    @staticmethod
+    def _buildMap(image, colors):
+        """Nx3 `colors` (in palette-index order) -> an (H, W) int32 array of
+        which color index each pixel matches. Shared by __init__ (colors
+        from np.unique) and fromSaved (colors from a saved palette), so a
+        reload matches pixels against the palette that was actually saved
+        instead of re-deriving color order from the image alone."""
+        layerShape = image.shape[:-1]
+        map_ = np.zeros(layerShape, dtype=np.int32)
+        for c, color in enumerate(colors):
+            mask = np.all(image == color, axis=-1)
+            map_[mask] = c
+        return map_
+
+    @staticmethod
+    def fromSaved(image: np.array, scale: int, palette: Palette, layers: np.array):
+        """Reconstructs a Canvas from a Project save file's pieces: the
+        already scale-reduced image, the scale it was reduced by, the
+        saved Palette (names intact), and the saved height grid.
+        Matches pixels against `palette`'s own color order rather than
+        recomputing np.unique, so edits like recoloring a palette entry
+        can't desync a reload from what was actually saved."""
+        return Canvas(image, scale=scale, palette=palette, layers=layers)
 
     @staticmethod
     def detectScale(image: np.array):
@@ -65,8 +97,9 @@ class Canvas:
         return baseImage, maxScale
 
 
-    # Image import for now; the "PNG Files" filter is the one entry point
-    # a future custom project format (e.g. "*.pap") would extend alongside.
+    # Raw image import - one entry point alongside Project.load for opening
+    # a saved *.pap project (see project.py), which reconstructs a Canvas
+    # via fromSaved instead of re-detecting scale/palette from scratch.
     @staticmethod
     def loadNewCanvas(parent=None):
         filePath, _ = QFileDialog.getOpenFileName(parent, "Import Image", "", "PNG Files (*.png)")
@@ -134,7 +167,8 @@ class Canvas:
 
     def wandSelect(self, color, mode="replace"):
         if len(color) == 3:
-            value = max([(range(len(self.palette))[i] if np.all(self.palette[i] == color) else 0) for i in range(len(self.palette))])
+            colors = self.palette.colors
+            value = max([(range(len(colors))[i] if np.all(colors[i] == color) else 0) for i in range(len(colors))])
         else:
             value = color
         newSelection = self.map == value

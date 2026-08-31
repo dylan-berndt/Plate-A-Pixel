@@ -18,7 +18,7 @@ if canvas is None:
 
 print(canvas.scale)
 
-for c, color in enumerate(canvas.palette):
+for c, color in enumerate(canvas.palette.colors):
     canvas.wandSelect(color)
     # layers starts at -1 (empty) and transformSelection adds to it, so
     # +c alone leaves color 0 at -1 and color 1 at 0 - both still "empty"

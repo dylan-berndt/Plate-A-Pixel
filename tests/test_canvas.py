@@ -12,7 +12,7 @@ def test_detect_scale_recovers_logical_grid(canvas):
 
 
 def test_palette_has_three_colors(canvas):
-    assert canvas.palette.shape[0] == 3
+    assert len(canvas.palette) == 3
 
 
 def test_from_file_path_round_trip(tmp_path, pixel_art_image):
