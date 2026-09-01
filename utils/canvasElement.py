@@ -1,53 +1,16 @@
-from dataclasses import dataclass
 from PySide6.QtWidgets import QWidget
 from .ui import *
 from .data import *
-
-
-@dataclass
-class Options:
-    name: str
-    optionType: str
-    options: dict
-
-
-@dataclass
-class Tool:
-    name: str
-    options: dict[Options]
-    selections: dict
 
 
 class CanvasArea(QWidget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.wand = Tool("wand",
-                           {"mode":
-                            Options("Selection Mode", "dropdown",
-                                    {"Addition": "add", "Subtraction": "subtract", "Replacement": "replace", "Intersection": "intersect"}),
-                            "diagonal":
-                            Options("Use Diagonals", "dropdown",
-                                    {"True": True, "False": False})},
-                           {"mode": "add", "diagonal": True})
-
-        self.brushSelect = Tool("brushSelect",
-                                {"size":
-                                 Options("Brush Size", "slider",
-                                         {"Minimum": 1, "Maximum": 35})},
-                                {"size": 4})
-
-        self.brush = Tool("brush",
-                          {"size":
-                           Options("Brush Size", "slider",
-                                   {"Minimum": 1, "Maximum": 35})},
-                          {"size": 4})
-
-        self.tools = [self.wand, self.brushSelect, self.brush]
-
-        self.tool = self.wand
-
-        # TODO: Create grid and buttons, tools, and artist
+        # TODO: Create grid and buttons, and artist. Tool state lives in
+        # AppController.toolController (see controllers/toolController.py) -
+        # this widget's job is to turn a mouse event into a canvas position
+        # and call toolController.press/drag/release with it.
 
     def mousePressEvent(self, event):
         # TODO: Alter state to influence CanvasArtist

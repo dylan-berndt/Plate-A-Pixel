@@ -2,24 +2,38 @@ import numpy as np
 from PIL import Image
 from PySide6.QtWidgets import QFileDialog
 
+from .palette import Palette
+
 
 class Canvas:
-    def __init__(self, image: np.array):
-        # TODO: Evaluate using map instead of raw image
-        self.image, self.scale = Canvas.detectScale(image)
+    def __init__(self, image: np.array, scale: int = None, palette: Palette = None, layers: np.array = None):
+        """Builds a Canvas from a raw image by default (auto-detecting scale
+        and the palette from the image's own unique colors). `scale`,
+        `palette` and `layers` let a caller (Project.load) supply all three
+        explicitly instead, reconstructing the exact canvas a save captured
+        - matching pixels against the saved palette's own color order
+        rather than re-deriving it, so a later recolor can't desync a
+        reload from what was actually saved."""
+        if scale is None:
+            self.image, self.scale = Canvas.detectScale(image)
+        else:
+            self.image, self.scale = image, scale
 
-        self.palette = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
+        if palette is None:
+            uniqueColors = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
+            palette = Palette(uniqueColors)
+        self.palette = palette
 
         layerShape = self.image.shape[:-1]
         self.map = np.zeros(layerShape, dtype=np.int32)
-        for c, color in enumerate(self.palette):
+        for c, color in enumerate(self.palette.colors):
             mask = np.all(self.image == color, axis=-1)
             self.map[mask] = c
 
         self.baseColor = None
         # -1 means "no pixel placed here yet" (empty space); valid printed
         # pixels have a height of 1 or more, set later via the height brush.
-        self.layers = np.full_like(self.map, -1, dtype=np.int32)
+        self.layers = layers if layers is not None else np.full_like(self.map, -1, dtype=np.int32)
 
         self.selection = np.zeros_like(self.map, dtype=np.bool)
 
@@ -65,8 +79,9 @@ class Canvas:
         return baseImage, maxScale
 
 
-    # Image import for now; the "PNG Files" filter is the one entry point
-    # a future custom project format (e.g. "*.pap") would extend alongside.
+    # Raw image import - one entry point alongside Project.load for opening
+    # a saved *.pap project (see project.py), which passes Canvas its
+    # saved scale/palette/layers directly instead of re-detecting them.
     @staticmethod
     def loadNewCanvas(parent=None):
         filePath, _ = QFileDialog.getOpenFileName(parent, "Import Image", "", "PNG Files (*.png)")
@@ -134,7 +149,8 @@ class Canvas:
 
     def wandSelect(self, color, mode="replace"):
         if len(color) == 3:
-            value = max([(range(len(self.palette))[i] if np.all(self.palette[i] == color) else 0) for i in range(len(self.palette))])
+            colors = self.palette.colors
+            value = max([(range(len(colors))[i] if np.all(colors[i] == color) else 0) for i in range(len(colors))])
         else:
             value = color
         newSelection = self.map == value
@@ -163,6 +179,15 @@ class Canvas:
 
             queue = queue[1:]
 
+        self.alterSelection(newSelection, mode)
+
+    def brushSelect(self, position, radius, mode="replace"):
+        """Every cell within `radius` of `position` (Euclidean, in grid
+        cells) - color-blind, unlike wandSelect/bucketSelect, since a
+        brush stamps an area rather than picking out one color."""
+        y, x = position
+        yGrid, xGrid = np.ogrid[:self.map.shape[0], :self.map.shape[1]]
+        newSelection = (yGrid - y) ** 2 + (xGrid - x) ** 2 <= radius ** 2
         self.alterSelection(newSelection, mode)
 
     def transformSelection(self, direction=1):
