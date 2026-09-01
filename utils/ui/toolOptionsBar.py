@@ -20,7 +20,7 @@ class ToolOptionsBar(QWidget):
         self._toolController = toolController
 
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(14, 0, 14, 0)
+        self._layout.setContentsMargins(14, 6, 14, 6)
         self._layout.setSpacing(12)
 
         self._nameLabel = SectionLabel("", theme=theme)

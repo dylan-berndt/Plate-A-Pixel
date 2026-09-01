@@ -302,7 +302,7 @@ class Stepper(QWidget):
         buttonStyle = f"""
             QPushButton {{
                 background: {theme.paper}; border: 1.5px solid {theme.ink};
-                border-radius: 3px; font-size: 12px;
+                border-radius: 3px; font-size: 12px; padding: 0;
             }}
             QPushButton:hover {{ background: {theme.clay200}; }}
         """
@@ -541,26 +541,30 @@ def buildOptionWidget(option, currentValue, onChange, theme: Theme = None):
         return PillToggle(option.name, checked=bool(currentValue), onToggle=onChange, theme=theme)
 
     if option.optionType == "slider":
+        # One row - label, slider, value field - not stacked, so this
+        # option never changes the tool options bar's height relative to
+        # any other option type (a dropdown/checkbox row and a slider row
+        # used to be different heights, which made the whole window
+        # resize - and the tool rail along with it, since it has no fixed
+        # height of its own - just from switching tools).
         container = QWidget()
-        layout = QVBoxLayout(container)
+        layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(8)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.addWidget(SectionLabel(option.name, theme=theme))
+        layout.addWidget(SectionLabel(option.name, theme=theme))
+
         bounds = (option.options.get("Minimum", 0), option.options.get("Maximum", 100))
+        slider = Slider(bounds, onChange, defaultValue=currentValue)
+        layout.addWidget(slider)
+
         valueField = TextInput()
         valueField.setFixedWidth(36)
         valueField.setText(str(currentValue))
         valueField.setStyleSheet(
             f"font-family: '{theme.monoFontFamily}'; font-size: 10.5px; padding: 1px 4px;"
         )
-        header.addWidget(valueField)
-        layout.addLayout(header)
-
-        slider = Slider(bounds, onChange, defaultValue=currentValue)
-        layout.addWidget(slider)
+        layout.addWidget(valueField)
 
         slider.valueChanged.connect(lambda v: valueField.setText(str(v)))
 

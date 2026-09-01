@@ -164,11 +164,28 @@ class CanvasArtist(QWidget):
         painter.end()
 
     def _paintEmptyState(self, painter: QPainter):
-        painter.setPen(QColor(self._theme.clay500))
+        theme = self._theme
+        text = "Open an image to get started"
+
         font = painter.font()
         font.setPointSizeF(max(9.0, font.pointSizeF()))
         painter.setFont(font)
-        painter.drawText(self.rect(), Qt.AlignCenter, "Open an image to get started")
+
+        metrics = painter.fontMetrics()
+        textRect = metrics.boundingRect(text)
+        paddingX, paddingY = 24, 16
+        boxWidth = textRect.width() + paddingX * 2
+        boxHeight = textRect.height() + paddingY * 2
+        box = QRectF(
+            (self.width() - boxWidth) / 2, (self.height() - boxHeight) / 2, boxWidth, boxHeight,
+        )
+
+        painter.setPen(QPen(QColor(theme.ink), 1.5))
+        painter.setBrush(QColor(theme.paper))
+        painter.drawRoundedRect(box, 8, 8)
+
+        painter.setPen(QColor(theme.clay500))
+        painter.drawText(box, Qt.AlignCenter, text)
 
     def _paintChecker(self, painter: QPainter):
         theme = self._theme

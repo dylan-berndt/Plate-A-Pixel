@@ -32,7 +32,12 @@ uniform vec3 uLightDir;
 out vec4 fragColor;
 void main() {
     vec3 n = normalize(vNormal);
-    float diffuse = max(dot(n, normalize(-uLightDir)), 0.0);
+    // abs(), not max(dot, 0): per-triangle normals aren't consistently
+    // outward-facing (see the no-culling note in initializeGL - the same
+    // trimesh winding inconsistency would otherwise light a real chunk of
+    // faces as if they pointed away from the light, rendering them near-
+    // black instead of matching their neighbors).
+    float diffuse = abs(dot(n, normalize(-uLightDir)));
     vec3 lit = uColor * 0.4 + uColor * diffuse * 0.7;
     fragColor = vec4(min(lit, vec3(1.0)), 1.0);
 }
@@ -166,8 +171,13 @@ class MeshElement(QOpenGLWidget):
 
     def initializeGL(self):
         GL.glEnable(GL.GL_DEPTH_TEST)
-        GL.glEnable(GL.GL_CULL_FACE)
-        GL.glCullFace(GL.GL_BACK)
+        # No face culling: trimesh's boolean union/difference output (see
+        # componentTriangles in pixelComponents.py) doesn't guarantee
+        # consistent CCW winding across a merged solid's triangles - measured
+        # ~30% of a raised pixel's faces wound the "wrong" way after a
+        # union. Culling on that basis would silently drop real, visible
+        # geometry rather than just cost a bit of harmless overdraw on this
+        # low-poly mesh.
         theme = self._theme
         r, g, b = (int(theme.clay200[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
         GL.glClearColor(r, g, b, 1.0)

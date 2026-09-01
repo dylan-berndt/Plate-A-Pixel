@@ -175,3 +175,32 @@ def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
 def test_project_controller_owns_a_canvas_controller(controller):
     assert isinstance(controller.canvasController, CanvasController)
     assert controller.canvasController.project is controller.project
+
+
+def test_a_failing_mesh_computation_does_not_wedge_the_pipeline(controller, monkeypatch):
+    # A worker whose Mesh._calculateMesh() raises (e.g. a trimesh boolean
+    # op needing a graph engine backend that isn't installed) must not
+    # leave _meshWorker permanently set - every future rebuildMesh() call
+    # would otherwise just queue behind a worker that has already died,
+    # silently going stale forever with no visible sign why.
+    def alwaysFails(self):
+        raise RuntimeError("simulated trimesh failure")
+
+    monkeypatch.setattr(Mesh, "_calculateMesh", alwaysFails)
+
+    ready = spy(controller.meshReady)
+    controller.canvasController.setMargin(1)
+    waitForMeshWorker(controller)
+
+    assert controller._meshWorker is None
+    assert len(ready) == 1
+    assert controller.project.mesh.meshes == []
+
+    # the pipeline must still work for the next edit, once computation
+    # can actually succeed again
+    monkeypatch.undo()
+    controller.canvasController.setMargin(2)
+    waitForMeshWorker(controller)
+
+    assert controller._meshWorker is None
+    assert len(ready) == 2

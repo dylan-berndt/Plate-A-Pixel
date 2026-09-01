@@ -1,3 +1,5 @@
+import sys
+import traceback
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -44,7 +46,20 @@ class _MeshWorker(QThread):
         mesh.tubeMargin = self._viewSettings.tubeMargin
         mesh.wallThickness = self._viewSettings.wallThickness
         mesh.bulgeSize = self._viewSettings.bulgeSize
-        mesh._calculateMesh()
+        try:
+            mesh._calculateMesh()
+        except Exception:
+            # An exception here (e.g. trimesh hitting a boolean-op case
+            # its installed backends can't handle) must never be silently
+            # swallowed by the thread and left there: without this,
+            # meshComputed never fires, self._meshWorker (in
+            # ProjectController) never clears, and every future
+            # rebuildMesh() call just queues behind a worker that has
+            # already died - the mesh view goes stale forever with no
+            # visible sign why. Emitting the still-empty Mesh keeps the
+            # pipeline alive; the traceback at least says why nothing's
+            # there instead of nothing at all.
+            traceback.print_exc(file=sys.stderr)
         self.meshComputed.emit(mesh)
 
 

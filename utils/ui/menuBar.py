@@ -1,8 +1,9 @@
 from PySide6.QtWidgets import QMenuBar, QFileDialog, QMessageBox
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 
 from ..data.objExport import unnamedColorIndices
+from .base import Theme
 
 
 class MenuBar(QMenuBar):
@@ -20,9 +21,24 @@ class MenuBar(QMenuBar):
 
     exportRequested = Signal()
 
-    def __init__(self, appController, **kwargs):
+    def __init__(self, appController, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         self._appController = appController
+        theme = theme or Theme()
+
+        # The mockup's top bar is the darkest brown in the app - distinct
+        # from the lighter clay-800 tab strip directly below it (see
+        # TabBar) - and it needs its own stylesheet to get that at all,
+        # since the app-wide QWidget{background:...} rule (see Theme.
+        # stylesheet) is light and would otherwise cascade here too.
+        self.setStyleSheet(f"""
+            QMenuBar {{ background: {theme.clay950}; color: {theme.paper}; padding: 2px 6px; }}
+            QMenuBar::item {{ background: transparent; padding: 4px 10px; border-radius: 3px; }}
+            QMenuBar::item:selected {{ background: rgba(255, 255, 255, 0.12); }}
+            QMenu {{ background: {theme.paper}; color: {theme.ink}; border: 1.5px solid {theme.ink}; }}
+            QMenu::item {{ padding: 5px 20px; }}
+            QMenu::item:selected {{ background: {theme.clay200}; }}
+        """)
 
         fileMenu = self.addMenu("File")
         newAction = fileMenu.addAction("New From Image...")

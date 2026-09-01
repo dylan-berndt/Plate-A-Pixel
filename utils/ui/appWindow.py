@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter
+from PySide6.QtCore import Qt
 
 from .base import Theme
 from .menuBar import MenuBar
@@ -33,7 +34,7 @@ class AppWindow(QMainWindow):
         self.setWindowTitle("Plate-A-Pixel")
         self.setStyleSheet(self.theme.stylesheet())
 
-        self._menuBar = MenuBar(appController)
+        self._menuBar = MenuBar(appController, theme=self.theme)
         self._menuBar.exportRequested.connect(self._onExportRequested)
         self.setMenuBar(self._menuBar)
 
@@ -50,34 +51,66 @@ class AppWindow(QMainWindow):
         self._optionsBar = ToolOptionsBar(appController, appController.toolController, theme=self.theme)
         rootLayout.addWidget(self._optionsBar)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        # A QSplitter (not a plain QHBoxLayout) so the tool rail and right
+        # pane can be dragged wider/narrower by the user - the center
+        # (canvas + mesh view) is its own plain widget, one splitter pane,
+        # so dragging the rail/right-pane handles doesn't also start
+        # treating the canvas/mesh split as something to resize.
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(4)
+        splitter.setChildrenCollapsible(False)
 
         self._toolRail = ToolRail(appController, appController.toolController, theme=self.theme)
-        body.addWidget(self._toolRail)
+        self._toolRail.setMinimumWidth(40)
+        # objectName-scoped selector, not a bare declaration list: an
+        # unscoped local stylesheet on a widget still cascades to its
+        # QLabel descendants (QLabel is itself a QFrame subclass - see the
+        # identical note on MeshSettingsPanel's card/SegmentedControl's
+        # frame), which would draw this same border down the left edge of
+        # every "LAYER" SectionLabel-style child instead of just the rail.
+        self._toolRail.setObjectName("toolRail")
+        self._toolRail.setAttribute(Qt.WA_StyledBackground, True)
+        self._toolRail.setStyleSheet(
+            f"QWidget#toolRail {{ background: {self.theme.clay300}; border: 2px solid {self.theme.ink}; }}"
+        )
+        splitter.addWidget(self._toolRail)
+
+        centerWidget = QWidget()
+        centerLayout = QHBoxLayout(centerWidget)
+        centerLayout.setContentsMargins(0, 0, 0, 0)
+        centerLayout.setSpacing(0)
 
         # Filled in by setCanvasArea/setMeshElement once those views exist.
         self._canvasSlot = QWidget()
         self._canvasSlotLayout = QVBoxLayout(self._canvasSlot)
         self._canvasSlotLayout.setContentsMargins(0, 0, 0, 0)
-        body.addWidget(self._canvasSlot, 1)
+        centerLayout.addWidget(self._canvasSlot, 1)
         self.canvasArea = None
 
         self._meshSlot = QWidget()
         self._meshSlotLayout = QVBoxLayout(self._meshSlot)
         self._meshSlotLayout.setContentsMargins(0, 0, 0, 0)
-        body.addWidget(self._meshSlot, 1)
+        centerLayout.addWidget(self._meshSlot, 1)
         self.meshElement = None
 
+        splitter.addWidget(centerWidget)
+
         rightContainer = QWidget()
-        # 216 (the mockup's own rail width) is too narrow now that
-        # MeshSettingsPanel has 3 more rows than the mockup did - "Wall
-        # Thickness" alone doesn't fit its label column at that width even
-        # word-wrapped, since a single word can't wrap further. Widened
-        # just enough for that; see MeshSettingsPanel.CARD_CONTENT_WIDTH.
-        rightContainer.setFixedWidth(250)
-        rightContainer.setStyleSheet(f"background: {self.theme.clay300};")
+        # Not an arbitrary floor: MeshSettingsPanel's rows use fixed
+        # (not shrinkable) widths sized for exactly this much space - see
+        # its CARD_CONTENT_WIDTH note - so narrower would clip a row's
+        # content rather than reflow it. The user can still widen this
+        # pane freely; just not below where it actually fits.
+        rightContainer.setMinimumWidth(250)
+        # objectName-scoped for the same reason as toolRail above - an
+        # unscoped local stylesheet here would also draw this border down
+        # every SectionLabel in PaletteRail/MeshSettingsPanel (QLabel is a
+        # QFrame subclass), not just around the pane itself.
+        rightContainer.setObjectName("rightContainer")
+        rightContainer.setAttribute(Qt.WA_StyledBackground, True)
+        rightContainer.setStyleSheet(
+            f"QWidget#rightContainer {{ background: {self.theme.clay300}; border: 2px solid {self.theme.ink}; }}"
+        )
         rightLayout = QVBoxLayout(rightContainer)
         rightLayout.setContentsMargins(0, 0, 0, 0)
         rightLayout.setSpacing(0)
@@ -85,9 +118,16 @@ class AppWindow(QMainWindow):
         self._meshSettingsPanel = MeshSettingsPanel(theme=self.theme)
         rightLayout.addWidget(self._paletteRail)
         rightLayout.addWidget(self._meshSettingsPanel)
-        body.addWidget(rightContainer)
+        splitter.addWidget(rightContainer)
 
-        rootLayout.addLayout(body, 1)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        # 250 (not the mockup's original 216) - see MeshSettingsPanel.
+        # CARD_CONTENT_WIDTH's own note on why that had to grow.
+        splitter.setSizes([40, 1000, 250])
+
+        rootLayout.addWidget(splitter, 1)
 
         self._statusBar = StatusBar(theme=self.theme)
         rootLayout.addWidget(self._statusBar)
