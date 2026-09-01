@@ -50,18 +50,19 @@ class ProjectController(QObject):
     Undo is a plain stack of whole-state snapshots (layers, selection,
     palette, view settings) - there isn't enough data in a Project to
     justify a command pattern with a do/undo pair per operation. Every
-    mutating method (here and on canvasController) pushes one snapshot
-    before it acts via pushUndo(); undo()/redo() pop a snapshot and
-    restore it wholesale, then just re-emit everything rather than
-    tracking what specifically changed. Whether undo/redo are currently
-    available is for the view to check (canUndo/canRedo) - no signal
-    fires just for that.
+    mutating method (here, on canvasController, and on the Tool
+    subclasses) pushes one snapshot before it acts via pushUndo(), usually
+    through the editing() context manager below; undo()/redo() pop a
+    snapshot and restore it wholesale, then just re-emit everything rather
+    than tracking what specifically changed. Whether undo/redo are
+    currently available is for the view to check (canUndo/canRedo) - no
+    signal fires just for that.
 
     A multi-call gesture (a tool's onPress/onDrag/.../onRelease sequence)
     should undo as one step, not one step per call - beginGesture()/
     endGesture() bracket that: only the first pushUndo() inside a
-    gesture actually pushes a snapshot, so a drag calling
-    canvasController.bucketSelect fifty times still costs one undo entry.
+    gesture actually pushes a snapshot, so a BrushSelectTool drag calling
+    editing() fifty times still costs one undo entry.
 
     Mesh recomputation runs on a background QThread (~0.6s for a full
     image is long enough to visibly stall the UI otherwise): calling
@@ -71,12 +72,13 @@ class ProjectController(QObject):
     the current one finishes - a burst of edits collapses into a single
     follow-up recompute rather than queuing one per edit.
 
-    Canvas editing (selection, height, hollow/margin) isn't this class's
-    job - see canvasController (CanvasController), which calls back into
-    pushUndo()/rebuildMesh() here to stay on this same undo stack and
-    mesh pipeline rather than owning its own. Turning a click into a
-    canvasController call isn't this class's job either - see
-    ToolController and Tool in ..tools."""
+    Canvas editing isn't this class's job: height/hollow/margin live on
+    canvasController (CanvasController), and selection lives directly on
+    the FunctionalTool subclasses in ..tools - both call back into
+    editing()/pushUndo()/rebuildMesh() here to stay on this same undo
+    stack and mesh pipeline rather than owning their own. Turning a click
+    into one of those calls isn't this class's job either - see
+    ToolController in this package."""
 
     selectionChanged = Signal()
     paletteChanged = Signal()

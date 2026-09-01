@@ -70,18 +70,25 @@ directly. Don't add a "height tool" without revisiting this.
   `onDrag(controller, pos)`/`onRelease(controller, pos)` (no-ops by
   default). Handlers take the `CanvasController` to act through as an
   explicit argument rather than storing one — see ToolController below
-  for why.
-- **`WandTool`** — click-to-select, built on `CanvasController.
-  bucketSelect`. There is no separate "bucket tool": `bucketSelect
-  (contiguous=False)` is already identical to picking every cell matching
-  the clicked color, so "contiguous" is just one of Wand's three options
-  (`mode`, `contiguous`, `diagonal`), not a second tool.
+  for why. A handler calls `Canvas` methods directly (via
+  `controller.project.canvas`) and wraps its own mutation in
+  `with controller.projectController.editing():` - there is no
+  `CanvasController.bucketSelect`/`brushSelect` standing in the middle;
+  that would just be a second copy of the same parameter list `Canvas`
+  already has, for no benefit. `Canvas.bucketSelect`/`brushSelect`
+  themselves are unchanged, real, independently-tested domain methods.
+- **`WandTool`** — click-to-select, built on `Canvas.bucketSelect`. There
+  is no separate "bucket tool": `bucketSelect(contiguous=False)` is
+  already identical to picking every cell matching the clicked color, so
+  "contiguous" is just one of Wand's three options (`mode`, `contiguous`,
+  `diagonal`), not a second tool.
 - **`BrushSelectTool`** — drag-to-select within a radius (`size` option)
-  of the pointer. `onPress` and `onDrag` both call `CanvasController.
-  brushSelect`; a drag that started in "Replacement" mode downgrades to
-  "add" on every sample after the first, since re-applying "replace" on
-  each dragged-over cell would erase everything painted earlier in the
-  same stroke.
+  of the pointer, built on `Canvas.brushSelect`. `onPress` and `onDrag`
+  share a private `_stamp()` helper (that's an implementation detail of
+  this one tool, not a shared base-class mechanism); a drag that started
+  in "Replacement" mode downgrades to "add" on every sample after the
+  first, since re-applying "replace" on each dragged-over cell would
+  erase everything painted earlier in the same stroke.
 - **`ToolRegistry`** — the list of available tools and which is active;
   what a tool rail/options bar bind to. `setActiveTool(name)` raises on
   an unknown name.
@@ -109,19 +116,20 @@ domain call, and emits a signal:
 | `renameColor`, `recolorColor` | `paletteChanged` |
 
 Actual canvas editing (selection, height, hollow/margin) lives on
-`CanvasController` (below) instead — but calls back into the pieces here
-so there is exactly one undo stack and one mesh pipeline per project, not
-two competing ones:
+`CanvasController` and on the tools themselves (below) instead — but
+calls back into the pieces here so there is exactly one undo stack and
+one mesh pipeline per project, not two or three competing ones:
 
 - **`pushUndo()`** — record an undo point before a mutation. Public
-  specifically so `CanvasController` can call it.
+  specifically so `CanvasController` and the tool layer can call it.
 - **`rebuildMesh()`** — kick off a mesh recompute (see below). Public for
   the same reason.
 - **`editing(affectsMesh=False)`** — a context manager combining both:
   `pushUndo()` on entry, then either `rebuildMesh()` or
-  `selectionChanged.emit()` on exit. `CanvasController`'s methods are each
-  just a `with self.projectController.editing():` block around the
-  actual domain call, instead of repeating pushUndo-then-emit by hand.
+  `selectionChanged.emit()` on exit. `CanvasController`'s methods, and
+  each `FunctionalTool` handler, are each just a `with
+  controller.projectController.editing():` block around the actual
+  domain call, instead of repeating pushUndo-then-emit by hand.
 
 **Undo/redo** is a plain stack of whole-`Project`-state snapshots
 (`layers`, `selection`, `palette`, `viewSettings`) — not a command
@@ -138,8 +146,8 @@ stack is already a safe no-op.
 `onRelease`) must undo as one step, not one per call — `beginGesture()`/
 `endGesture()` bracket that. Only the first `pushUndo()` inside a
 gesture actually pushes a snapshot; a `BrushSelectTool` drag calling
-`CanvasController.brushSelect` fifty times still costs exactly one undo
-entry.
+`editing()` (and so `pushUndo()`) fifty times still costs exactly one
+undo entry.
 
 **Dirty tracking**: `controller.isDirty` is `True` from the first edit
 (or `undo`/`redo`) since the project was created or last saved, `False`
@@ -186,30 +194,32 @@ the whole press→drag→release sequence in that `ProjectController`'s
 `beginGesture()`/`endGesture()` (even a mid-drag tab switch can't
 misattribute later samples to a different project), and hands each
 handler that project's `canvasController` — not the `ProjectController`
-itself, since tools only ever call canvas-editing methods.
+itself, since tools only ever need what `CanvasController` exposes plus
+direct `Canvas` access through it (see the tool layer above).
 
-### `CanvasController` — canvas editing for one project, plus a placeholder for more
+### `CanvasController` — the height/hollow/margin settings, plus a placeholder for more
 
 Created one-per-project (`projectController.canvasController`), wrapping
 that `ProjectController` (not a bare `Project`) so every edit still goes
-through its undo stack and mesh pipeline. Holds the canvas-editing
-methods moved off `ProjectController`:
+through its undo stack and mesh pipeline:
 
 | method | via |
 |---|---|
-| `bucketSelect(pos, contiguous, diagonal, mode)` | `with projectController.editing():` |
-| `brushSelect(pos, radius, mode)` | `with projectController.editing():` |
 | `transformSelectionLayer(delta)` | `with projectController.editing(affectsMesh=True):` |
 | `setHollow(hollow)` | `with projectController.editing(affectsMesh=True):` |
 | `setMargin(margin)` | `with projectController.editing(affectsMesh=True):` |
 
+Selection (`bucketSelect`/`brushSelect`) is *not* here - see the tool
+layer above for why it lives directly on `WandTool`/`BrushSelectTool`
+instead of a same-signature passthrough on this class.
+
 This is also the settled home for general canvas-view operations that
 are neither project-lifecycle (`ProjectController`'s remaining job:
 saving, undo bookkeeping, mesh pipeline, palette naming, export scale)
-nor a `Tool`'s job (selection/height, both above). The concrete example
-on the table is a future outline overlay for the 2D view; there may be
-others. Decide what goes here as those needs become concrete — don't
-invent methods speculatively.
+nor a `Tool`'s job (selection, above). The concrete example on the table
+is a future outline overlay for the 2D view; there may be others. Decide
+what goes here as those needs become concrete — don't invent methods
+speculatively.
 
 ## Views — not yet built
 

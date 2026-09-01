@@ -19,13 +19,17 @@ class BrushSelectTool(FunctionalTool):
         )
         self._dragMode = None
 
+    def _stamp(self, controller, pos, mode):
+        with controller.projectController.editing():
+            controller.project.canvas.brushSelect(pos, self.selections["size"], mode=mode)
+
     def onPress(self, controller, pos):
         self._dragMode = self.selections["mode"]
-        controller.brushSelect(pos, self.selections["size"], mode=self._dragMode)
+        self._stamp(controller, pos, self._dragMode)
 
     def onDrag(self, controller, pos):
         # A drag continuing a "replace" stroke must not keep replacing -
         # each sample would wipe out every cell painted earlier in the
         # same stroke, leaving only the brush's current stamp selected.
         mode = "add" if self._dragMode == "replace" else self._dragMode
-        controller.brushSelect(pos, self.selections["size"], mode=mode)
+        self._stamp(controller, pos, mode)

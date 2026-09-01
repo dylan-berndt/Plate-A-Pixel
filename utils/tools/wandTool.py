@@ -23,9 +23,10 @@ class WandTool(FunctionalTool):
         )
 
     def onPress(self, controller, pos):
-        controller.bucketSelect(
-            pos,
-            contiguous=self.selections["contiguous"],
-            diagonal=self.selections["diagonal"],
-            mode=self.selections["mode"],
-        )
+        with controller.projectController.editing():
+            controller.project.canvas.bucketSelect(
+                pos,
+                contiguous=self.selections["contiguous"],
+                diagonal=self.selections["diagonal"],
+                mode=self.selections["mode"],
+            )

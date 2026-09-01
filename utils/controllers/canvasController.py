@@ -1,11 +1,17 @@
 class CanvasController:
-    """Canvas-editing operations for one project: selection (bucketSelect,
-    brushSelect) and the geometry-affecting settings (transformSelectionLayer,
-    setHollow, setMargin). Each is a single `with self.projectController.
-    editing():` block - that context manager (see ProjectController.editing)
-    pushes the undo snapshot and, on exit, either rebuilds the mesh or
-    announces the selection changed, so nothing here repeats that
+    """Geometry-affecting settings for one project's canvas:
+    transformSelectionLayer, setHollow, setMargin. Each is a single `with
+    self.projectController.editing(affectsMesh=True):` block - that
+    context manager (see ProjectController.editing) pushes the undo
+    snapshot and rebuilds the mesh on exit, so nothing here repeats that
     bookkeeping by hand.
+
+    Selection (bucketSelect, brushSelect) isn't here - it lives directly
+    on WandTool/BrushSelectTool, which call Canvas's own bucketSelect/
+    brushSelect and wrap themselves in `with controller.projectController.
+    editing():`. Those are real, independently-tested domain methods on
+    Canvas; putting a same-signature passthrough here on top of them
+    would just be a second copy of the same parameter list for no benefit.
 
     Wraps the owning ProjectController rather than a bare Project so every
     edit still goes through that ProjectController's undo stack and mesh
@@ -25,18 +31,6 @@ class CanvasController:
     @property
     def project(self):
         return self.projectController.project
-
-    # -- selection ----------------------------------------------------
-
-    def bucketSelect(self, pos, contiguous=True, diagonal=False, mode="replace"):
-        with self.projectController.editing():
-            self.project.canvas.bucketSelect(pos, contiguous=contiguous, diagonal=diagonal, mode=mode)
-
-    def brushSelect(self, pos, radius, mode="replace"):
-        with self.projectController.editing():
-            self.project.canvas.brushSelect(pos, radius, mode=mode)
-
-    # -- height / mesh geometry -----------------------------------------
 
     def transformSelectionLayer(self, delta):
         with self.projectController.editing(affectsMesh=True):
