@@ -10,6 +10,12 @@ from .meshSettingsPanel import MeshSettingsPanel
 from .statusBar import StatusBar
 from .elements import TabBar
 
+# A plain, literal black for every chrome outline (tool rail, tool options
+# bar, right pane) - not theme.ink (a warm near-black used elsewhere for
+# button/card borders), which read as an inconsistent "two-color" mix
+# once these larger panel outlines sat next to it.
+OUTLINE_COLOR = "#000000"
+
 
 class AppWindow(QMainWindow):
     """Assembles every top-level piece (menu bar, tab strip, tool options
@@ -49,19 +55,21 @@ class AppWindow(QMainWindow):
         rootLayout.addWidget(self._tabBar)
 
         self._optionsBar = ToolOptionsBar(appController, appController.toolController, theme=self.theme)
+        # objectName-scoped for the same reason as toolRail/rightContainer
+        # below - an unscoped local stylesheet cascades to QLabel
+        # descendants (QLabel is itself a QFrame subclass).
+        self._optionsBar.setObjectName("optionsBar")
+        self._optionsBar.setAttribute(Qt.WA_StyledBackground, True)
+        self._optionsBar.setStyleSheet(f"QWidget#optionsBar {{ border: 2px solid {OUTLINE_COLOR}; }}")
         rootLayout.addWidget(self._optionsBar)
 
-        # A QSplitter (not a plain QHBoxLayout) so the tool rail and right
-        # pane can be dragged wider/narrower by the user - the center
-        # (canvas + mesh view) is its own plain widget, one splitter pane,
-        # so dragging the rail/right-pane handles doesn't also start
-        # treating the canvas/mesh split as something to resize.
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(4)
-        splitter.setChildrenCollapsible(False)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
 
+        # Plain widget, not a splitter pane - this one was a mistake to
+        # make resizable at all; only the right pane should be.
         self._toolRail = ToolRail(appController, appController.toolController, theme=self.theme)
-        self._toolRail.setMinimumWidth(40)
         # objectName-scoped selector, not a bare declaration list: an
         # unscoped local stylesheet on a widget still cascades to its
         # QLabel descendants (QLabel is itself a QFrame subclass - see the
@@ -69,11 +77,21 @@ class AppWindow(QMainWindow):
         # frame), which would draw this same border down the left edge of
         # every "LAYER" SectionLabel-style child instead of just the rail.
         self._toolRail.setObjectName("toolRail")
+        # No longer a splitter pane, so this isn't a drag-resize floor -
+        # just a safety net so nothing else in the layout can squeeze the
+        # rail narrower than its own icons plus the margin above.
+        self._toolRail.setMinimumWidth(40)
         self._toolRail.setAttribute(Qt.WA_StyledBackground, True)
         self._toolRail.setStyleSheet(
-            f"QWidget#toolRail {{ background: {self.theme.clay300}; border: 2px solid {self.theme.ink}; }}"
+            f"QWidget#toolRail {{ background: {self.theme.clay300}; border: 2px solid {OUTLINE_COLOR}; }}"
         )
-        splitter.addWidget(self._toolRail)
+        body.addWidget(self._toolRail)
+
+        # Only the right pane is a QSplitter (with the canvas/mesh area as
+        # its other pane) so it alone can be dragged wider/narrower.
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(4)
+        splitter.setChildrenCollapsible(False)
 
         centerWidget = QWidget()
         centerLayout = QHBoxLayout(centerWidget)
@@ -109,7 +127,7 @@ class AppWindow(QMainWindow):
         rightContainer.setObjectName("rightContainer")
         rightContainer.setAttribute(Qt.WA_StyledBackground, True)
         rightContainer.setStyleSheet(
-            f"QWidget#rightContainer {{ background: {self.theme.clay300}; border: 2px solid {self.theme.ink}; }}"
+            f"QWidget#rightContainer {{ background: {self.theme.clay300}; border: 2px solid {OUTLINE_COLOR}; }}"
         )
         rightLayout = QVBoxLayout(rightContainer)
         rightLayout.setContentsMargins(0, 0, 0, 0)
@@ -120,14 +138,14 @@ class AppWindow(QMainWindow):
         rightLayout.addWidget(self._meshSettingsPanel)
         splitter.addWidget(rightContainer)
 
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
         # 250 (not the mockup's original 216) - see MeshSettingsPanel.
         # CARD_CONTENT_WIDTH's own note on why that had to grow.
-        splitter.setSizes([40, 1000, 250])
+        splitter.setSizes([1000, 250])
 
-        rootLayout.addWidget(splitter, 1)
+        body.addWidget(splitter, 1)
+        rootLayout.addLayout(body, 1)
 
         self._statusBar = StatusBar(theme=self.theme)
         rootLayout.addWidget(self._statusBar)

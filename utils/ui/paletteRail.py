@@ -27,6 +27,16 @@ class PaletteRail(QWidget):
         outer.addWidget(SectionLabel("Palette", theme=self._theme))
 
         self._rowsContainer = QWidget()
+        # Explicit, not just "no stylesheet means transparent": once any
+        # widget anywhere gets a local stylesheet (rightContainer, in the
+        # real app - see AppWindow), Qt seems to re-evaluate cascaded
+        # matches more eagerly and can auto-enable WA_StyledBackground on
+        # a plain descendant QWidget that matches the app-wide QWidget{
+        # background-color:...} rule (see Theme.stylesheet()) - even
+        # though it never had that attribute set directly - painting a
+        # solid box behind every palette row instead of staying
+        # transparent over rightContainer's own background.
+        self._rowsContainer.setStyleSheet("background: transparent;")
         self._rowsLayout = QVBoxLayout(self._rowsContainer)
         self._rowsLayout.setContentsMargins(0, 0, 0, 0)
         self._rowsLayout.setSpacing(2)
@@ -38,6 +48,8 @@ class PaletteRail(QWidget):
         outer.addWidget(divider)
 
         backgroundRow = QWidget()
+        # See the identical note on _rowsContainer above.
+        backgroundRow.setStyleSheet("background: transparent;")
         from PySide6.QtWidgets import QHBoxLayout, QLabel
         bgLayout = QHBoxLayout(backgroundRow)
         bgLayout.setContentsMargins(2, 2, 2, 2)

@@ -362,9 +362,17 @@ class PaletteRow(QWidget):
 
         self._nameEdit = QLineEdit(name)
         self._nameEdit.setPlaceholderText("Unnamed")
-        self._nameEdit.setStyleSheet(
-            f"border: none; background: transparent; font-size: 10.5px; font-weight: 600; padding: 0;"
-        )
+        # QLineEdit:focus needs its own explicit rule - the base
+        # (unfocused) "background: transparent" above doesn't carry over
+        # once focused, so clicking into the field to rename a color
+        # revealed a plain white/paper focus background otherwise.
+        self._nameEdit.setStyleSheet(f"""
+            QLineEdit {{
+                border: none; background: transparent;
+                font-size: 10.5px; font-weight: 600; padding: 0;
+            }}
+            QLineEdit:focus {{ border: none; background: transparent; }}
+        """)
         if onRename is not None:
             self._nameEdit.editingFinished.connect(lambda: onRename(self._nameEdit.text()))
         textColumn.addWidget(self._nameEdit)

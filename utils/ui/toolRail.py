@@ -38,7 +38,7 @@ class ToolRail(QWidget):
         self._boundProjectController = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 14, 0, 14)
+        layout.setContentsMargins(8, 14, 8, 14)
         layout.setSpacing(8)
         layout.setAlignment(layout.alignment())
 
