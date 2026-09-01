@@ -20,6 +20,13 @@ class MeshSettingsPanel(QWidget):
     # (world units, not mm - see Mesh.tubeMargin and friends), so they
     # need a much finer step than the millimeter-scale cell size fields.
     GEOMETRY_STEP = 0.01
+    # The card's own available width for a row's label+stepper - measured
+    # empirically from card.layout().contentsRect() rather than derived
+    # from the rail width, card margins, and card padding alone: the
+    # card's QSS border (see its QFrame#meshCard stylesheet) also eats
+    # into the content rect on top of setContentsMargins, by an amount
+    # Qt's box-model computes internally rather than exposing simply.
+    CARD_CONTENT_WIDTH = 194
 
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -73,24 +80,34 @@ class MeshSettingsPanel(QWidget):
         outer.addWidget(card)
         outer.addStretch(1)
 
+    # The stepper's own natural width (2 buttons + value field + spacing -
+    # see Stepper) - the label is capped to whatever's left of the card's
+    # content width so it wraps instead of squeezing the stepper's
+    # internal spacing (QHBoxLayout doesn't shrink a word-wrapped QLabel's
+    # allocation on its own - it needs an explicit cap to actually wrap
+    # rather than staying single-line and starving its neighbor).
+    STEPPER_WIDTH = 108
+
+    ROW_SPACING = 8
+
     def _addRow(self, layout, label, onIncrement, onDecrement):
-        # Label above the stepper, not beside it: the card's fixed width
-        # (matching the mockup's right rail) is too narrow for a label
-        # like "Wall thickness" to share a row with a stepper without
-        # squeezing the stepper below its own minimum size, clipping its
-        # value text against the + button. Stacking gives each the full
-        # card width instead of competing for it.
-        column = QVBoxLayout()
-        column.setSpacing(4)
-        column.addWidget(SectionLabel(label, theme=self._theme))
-
+        row = QHBoxLayout()
+        row.setSpacing(self.ROW_SPACING)
+        # A fixed width, not just a cap: with only a maximum, Qt's box
+        # layouts still let this word-wrapped label's minimum-size
+        # negotiation interact with (and sometimes compress) the Stepper
+        # sitting next to it, since QHBoxLayout doesn't handle a
+        # heightForWidth widget's sizing cleanly. Pinning both this and
+        # the Stepper (see its own Fixed size policy) to exact widths that
+        # sum to CARD_CONTENT_WIDTH removes any ambiguity for Qt to
+        # resolve by shrinking one of them unpredictably.
+        labelWidget = SectionLabel(label, theme=self._theme)
+        labelWidget.setWordWrap(True)
+        labelWidget.setFixedWidth(self.CARD_CONTENT_WIDTH - self.STEPPER_WIDTH - self.ROW_SPACING)
+        row.addWidget(labelWidget)
         stepper = Stepper("", onIncrement=onIncrement, onDecrement=onDecrement, theme=self._theme)
-        stepperRow = QHBoxLayout()
-        stepperRow.addWidget(stepper)
-        stepperRow.addStretch(1)
-        column.addLayout(stepperRow)
-
-        layout.addLayout(column)
+        row.addWidget(stepper)
+        layout.addLayout(row)
         return stepper
 
     def _addFloatRow(self, layout, label, attrName, setter):

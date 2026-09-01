@@ -71,7 +71,12 @@ class AppWindow(QMainWindow):
         self.meshElement = None
 
         rightContainer = QWidget()
-        rightContainer.setFixedWidth(216)
+        # 216 (the mockup's own rail width) is too narrow now that
+        # MeshSettingsPanel has 3 more rows than the mockup did - "Wall
+        # Thickness" alone doesn't fit its label column at that width even
+        # word-wrapped, since a single word can't wrap further. Widened
+        # just enough for that; see MeshSettingsPanel.CARD_CONTENT_WIDTH.
+        rightContainer.setFixedWidth(250)
         rightContainer.setStyleSheet(f"background: {self.theme.clay300};")
         rightLayout = QVBoxLayout(rightContainer)
         rightLayout.setContentsMargins(0, 0, 0, 0)

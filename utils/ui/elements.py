@@ -288,6 +288,13 @@ class Stepper(QWidget):
         super().__init__(**kwargs)
         theme = theme or Theme()
 
+        # Fixed, not the QWidget default Preferred: a -/value/+ control
+        # reads as broken if it's ever narrower than its own contents (the
+        # value text creeping under the + button) - it should never be
+        # the thing that gives when a row runs short on space; a sibling
+        # label should shrink/wrap first (see MeshSettingsPanel._addRow).
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
         layout = QVBoxLayout(self) if vertical else QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4 if vertical else 6)
