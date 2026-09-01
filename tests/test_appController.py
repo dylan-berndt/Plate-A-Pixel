@@ -117,7 +117,7 @@ def test_save_active_project_with_no_path_reuses_the_last_saved_path(app, imageP
     savePath = tmp_path / "out.pap"
     app.saveActiveProject(str(savePath))
 
-    app.activeController.recolorColor(0, (1, 2, 3))
+    app.activeController.canvasController.recolorColor(0, (1, 2, 3))
     app.saveActiveProject()  # plain "Save" - no path given
 
     assert app.activeController.isDirty is False

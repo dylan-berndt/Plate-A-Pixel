@@ -1,41 +1,23 @@
-import numpy as np
 import pytest
 
-from utils.data.canvas import Canvas
-from utils.data.project import Project, ViewSettings
 from utils.data.mesh import Mesh
-from utils.controllers.projectController import ProjectController
 from utils.controllers.canvasController import CanvasController
-from .fixtures import make_pixel_art, RED, RED_BLOCK, RED_ISLAND
-from .conftest import waitForMeshWorker
-
-
-@pytest.fixture
-def controller():
-    canvas = Canvas(make_pixel_art())
-    project = Project(canvas, viewSettings=ViewSettings(hollow=False, baseMargin=0))
-    c = ProjectController(project)
-    yield c
-    if c._meshWorker is not None:
-        c._meshWorker.wait()  # don't leave a running QThread dangling past the test
-
-
-def _spy(signal):
-    calls = []
-    signal.connect(lambda *args: calls.append(args))
-    return calls
+from .fixtures import RED_BLOCK, RED_ISLAND
+from .conftest import waitForMeshWorker, spy
 
 
 # -- editing() itself -----------------------------------------------------
 # Selection (bucketSelect/brushSelect) lives directly on WandTool/
-# BrushSelectTool now (see test_tools.py for that coverage) - these tests
-# exercise editing()'s own contract (push undo, then emit-or-rebuild)
-# using Canvas's real bucketSelect/brushSelect as a representative call.
+# BrushSelectTool now (see test_tools.py for that coverage), and the
+# other canvasController methods have their own tests in
+# test_canvasController.py - these exercise editing()'s own contract
+# (push undo, then emit-or-rebuild) using Canvas's real bucketSelect as a
+# representative call.
 
-def test_editing_pushes_undo_and_emits_selection_changed(controller):
-    calls = _spy(controller.selectionChanged)
+def test_editing_pushes_undo_and_emits_the_given_signal(controller):
+    calls = spy(controller.selectionChanged)
 
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.bucketSelect((0, 0), contiguous=False, mode="replace")
 
     canvas = controller.project.canvas
@@ -46,8 +28,14 @@ def test_editing_pushes_undo_and_emits_selection_changed(controller):
     assert len(controller._undoStack) == 1
 
 
+def test_editing_requires_affects_mesh_or_a_signal(controller):
+    with pytest.raises(AssertionError):
+        with controller.editing():
+            pass
+
+
 def test_editing_undo_restores_previous_selection(controller):
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.bucketSelect((0, 0), contiguous=False, mode="replace")
     assert controller.project.canvas.selection.sum() == len(RED_BLOCK) + 1
 
@@ -57,8 +45,8 @@ def test_editing_undo_restores_previous_selection(controller):
 
 
 def test_editing_affects_mesh_rebuilds_the_mesh(controller):
-    invalidated = _spy(controller.meshInvalidated)
-    ready = _spy(controller.meshReady)
+    invalidated = spy(controller.meshInvalidated)
+    ready = spy(controller.meshReady)
 
     with controller.editing(affectsMesh=True):
         controller.project.canvas.transformSelection(1)
@@ -69,133 +57,16 @@ def test_editing_affects_mesh_rebuilds_the_mesh(controller):
     assert isinstance(ready[0][0], Mesh)
 
 
-def test_transform_selection_layer_raises_selected_pixels_and_rebuilds_mesh(controller):
-    invalidated = _spy(controller.meshInvalidated)
-    ready = _spy(controller.meshReady)
-    controller.project.canvas.bucketSelect((0, 0), contiguous=False, mode="replace")  # setup, not under test
-
-    controller.canvasController.transformSelectionLayer(3)
-    waitForMeshWorker(controller)
-
-    canvas = controller.project.canvas
-    for pos in RED_BLOCK:
-        assert canvas.layers[pos] == 2  # started at -1 (empty), +3
-    assert len(invalidated) == 1
-    assert len(ready) == 1
-    assert isinstance(ready[0][0], Mesh)
-
-
-def test_transform_selection_layer_undo_restores_heights_and_rebuilds(controller):
-    controller.project.canvas.bucketSelect((0, 0), contiguous=False, mode="replace")  # setup, not under test
-    controller.canvasController.transformSelectionLayer(3)
-    waitForMeshWorker(controller)  # let that rebuild settle before triggering another
-
-    controller.undo()
-
-    canvas = controller.project.canvas
-    for pos in RED_BLOCK:
-        assert canvas.layers[pos] == -1
-
-
-def test_set_hollow_updates_view_settings_and_rebuilds_mesh(controller):
-    ready = _spy(controller.meshReady)
-
-    controller.canvasController.setHollow(True)
-    waitForMeshWorker(controller)
-
-    assert controller.project.viewSettings.hollow is True
-    assert len(ready) == 1
-
-
-def test_set_hollow_undo_reverts(controller):
-    controller.canvasController.setHollow(True)
-    waitForMeshWorker(controller)
-
-    controller.undo()
-
-    assert controller.project.viewSettings.hollow is False
-
-
-def test_set_margin_updates_view_settings_and_rebuilds_mesh(controller):
-    ready = _spy(controller.meshReady)
-
-    controller.canvasController.setMargin(2)
-    waitForMeshWorker(controller)
-
-    assert controller.project.viewSettings.baseMargin == 2
-    assert len(ready) == 1
-
-
-def test_set_cell_width_does_not_touch_the_mesh(controller):
-    invalidated = _spy(controller.meshInvalidated)
-    ready = _spy(controller.meshReady)
-    settingsChanged = _spy(controller.viewSettingsChanged)
-
-    controller.setCellWidth(12.0)
-
-    assert controller.project.viewSettings.cellWidth == 12.0
-    assert len(invalidated) == 0
-    assert len(ready) == 0
-    assert len(settingsChanged) == 1
-
-
-def test_set_cell_height_does_not_touch_the_mesh(controller):
-    ready = _spy(controller.meshReady)
-
-    controller.setCellHeight(3.5)
-
-    assert controller.project.viewSettings.cellHeight == 3.5
-    assert len(ready) == 0
-
-
-def test_rename_color_updates_palette_and_emits(controller):
-    calls = _spy(controller.paletteChanged)
-    index = controller.project.canvas.palette.indexOf(RED)
-
-    controller.renameColor(index, "Fire Red")
-
-    assert controller.project.canvas.palette[index].name == "Fire Red"
-    assert len(calls) == 1
-
-
-def test_rename_color_undo_reverts(controller):
-    index = controller.project.canvas.palette.indexOf(RED)
-    controller.renameColor(index, "Fire Red")
-
-    controller.undo()
-
-    assert controller.project.canvas.palette[index].name == ""
-
-
-def test_recolor_color_updates_palette_and_emits(controller):
-    calls = _spy(controller.paletteChanged)
-    index = controller.project.canvas.palette.indexOf(RED)
-
-    controller.recolorColor(index, (10, 20, 30))
-
-    assert controller.project.canvas.palette[index].color == (10, 20, 30)
-    assert len(calls) == 1
-
-
-def test_recolor_color_undo_reverts(controller):
-    index = controller.project.canvas.palette.indexOf(RED)
-    controller.recolorColor(index, (10, 20, 30))
-
-    controller.undo()
-
-    assert controller.project.canvas.palette[index].color == RED
-
-
 # -- gestures ---------------------------------------------------------------
 
 def test_gesture_collapses_repeated_edits_into_one_undo_step(controller):
     canvas = controller.project.canvas
     controller.beginGesture()
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((0, 0), radius=0, mode="add")
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((0, 1), radius=0, mode="add")
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((1, 0), radius=0, mode="add")
     controller.endGesture()
 
@@ -209,9 +80,9 @@ def test_gesture_collapses_repeated_edits_into_one_undo_step(controller):
 
 def test_calls_outside_a_gesture_each_push_their_own_undo_step(controller):
     canvas = controller.project.canvas
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((0, 0), radius=0, mode="add")
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((0, 1), radius=0, mode="add")
 
     assert len(controller._undoStack) == 2
@@ -221,10 +92,10 @@ def test_nested_gesture_calls_only_push_one_snapshot(controller):
     canvas = controller.project.canvas
     controller.beginGesture()
     controller.beginGesture()
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((0, 0), radius=0, mode="add")
     controller.endGesture()
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         canvas.brushSelect((0, 1), radius=0, mode="add")  # still inside the outer gesture
     controller.endGesture()
 
@@ -237,7 +108,7 @@ def test_can_undo_and_can_redo_reflect_the_stacks(controller):
     assert controller.canUndo is False
     assert controller.canRedo is False
 
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.brushSelect((0, 0), radius=0, mode="add")
     assert controller.canUndo is True
     assert controller.canRedo is False
@@ -256,14 +127,14 @@ def test_new_controller_is_not_dirty(controller):
 
 
 def test_an_edit_marks_the_controller_dirty(controller):
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.brushSelect((0, 0), radius=0, mode="add")
 
     assert controller.isDirty is True
 
 
 def test_undo_also_marks_the_controller_dirty(controller, tmp_path):
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.brushSelect((0, 0), radius=0, mode="add")
     controller.save(str(tmp_path / "test.pap"))
     assert controller.isDirty is False
@@ -279,7 +150,7 @@ def test_save_without_a_path_or_prior_save_raises(controller):
 
 
 def test_save_writes_to_the_given_path_and_clears_dirty(controller, tmp_path):
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.brushSelect((0, 0), radius=0, mode="add")
     assert controller.isDirty is True
     path = str(tmp_path / "test.pap")
@@ -294,7 +165,7 @@ def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
     path = str(tmp_path / "test.pap")
     controller.save(path)
 
-    with controller.editing():
+    with controller.editing(signal=controller.selectionChanged):
         controller.project.canvas.brushSelect((0, 0), radius=0, mode="add")
     controller.save()
 

@@ -23,7 +23,7 @@ class WandTool(FunctionalTool):
         )
 
     def onPress(self, controller, pos):
-        with controller.projectController.editing():
+        with controller.projectController.editing(signal=controller.projectController.selectionChanged):
             controller.project.canvas.bucketSelect(
                 pos,
                 contiguous=self.selections["contiguous"],

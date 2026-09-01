@@ -59,7 +59,7 @@ when to redraw. It never calls into `utils/data/` directly.
 **Tools are selection-only.** Every tool that exists changes
 `canvas.selection`; nothing about *height* goes through a tool — raising
 or lowering the current selection is a separate, not-yet-built part of
-the interface that will call `ProjectController.transformSelectionLayer`
+the interface that will call `CanvasController.transformSelectionLayer`
 directly. Don't add a "height tool" without revisiting this.
 
 - **`Tool`** (`tool.py`) — pure state: `name`, `options` (a schema of
@@ -102,34 +102,27 @@ not needed for now).
 
 ## Controller layer (`utils/controllers/`)
 
-### `ProjectController` — one open project's undo stack, mesh pipeline, and persistence
+### `ProjectController` — shared infrastructure: undo stack, mesh pipeline, persistence
 
-Owns the undo/redo stack, the mesh-recompute pipeline, save/dirty
-tracking, and its own mutating methods for what isn't canvas editing:
-`setCellWidth`, `setCellHeight` (export scale), `renameColor`,
-`recolorColor` (palette metadata). Each pushes undo state, does the
-domain call, and emits a signal:
+Owns no editing methods of its own. It's the infrastructure every actual
+edit runs through - the undo/redo stack, the mesh-recompute pipeline, and
+save/dirty tracking - not a second command surface competing with
+`CanvasController`. Concretely:
 
-| method(s) | signal(s) |
-|---|---|
-| `setCellWidth`, `setCellHeight` | `viewSettingsChanged` only — these scale `objExport`'s output, not `Mesh`'s own unit-based triangles, so they never touch the mesh |
-| `renameColor`, `recolorColor` | `paletteChanged` |
-
-Actual canvas editing (selection, height, hollow/margin) lives on
-`CanvasController` and on the tools themselves (below) instead — but
-calls back into the pieces here so there is exactly one undo stack and
-one mesh pipeline per project, not two or three competing ones:
-
-- **`pushUndo()`** — record an undo point before a mutation. Public
-  specifically so `CanvasController` and the tool layer can call it.
+- **`pushUndo()`** — record an undo point before a mutation. Public so
+  `CanvasController` and the tool layer can call it.
 - **`rebuildMesh()`** — kick off a mesh recompute (see below). Public for
   the same reason.
-- **`editing(affectsMesh=False)`** — a context manager combining both:
-  `pushUndo()` on entry, then either `rebuildMesh()` or
-  `selectionChanged.emit()` on exit. `CanvasController`'s methods, and
-  each `FunctionalTool` handler, are each just a `with
-  controller.projectController.editing():` block around the actual
-  domain call, instead of repeating pushUndo-then-emit by hand.
+- **`editing(affectsMesh=False, signal=None)`** — a context manager
+  combining both: `pushUndo()` on entry, then either `rebuildMesh()` (if
+  `affectsMesh`) or the given signal's `.emit()` on exit. Exactly one of
+  `affectsMesh`/`signal` applies - there's no implicit default signal,
+  since different `CanvasController` methods announce themselves
+  differently (`selectionChanged`, `paletteChanged`,
+  `viewSettingsChanged`). Every `CanvasController` method, and each
+  `FunctionalTool` handler, is just a `with controller.projectController.
+  editing(...):` block around the actual domain call, instead of
+  repeating pushUndo-then-emit by hand.
 
 **Undo/redo** is a plain stack of whole-`Project`-state snapshots
 (`layers`, `selection`, `palette`, `viewSettings`) — not a command
@@ -197,29 +190,29 @@ handler that project's `canvasController` — not the `ProjectController`
 itself, since tools only ever need what `CanvasController` exposes plus
 direct `Canvas` access through it (see the tool layer above).
 
-### `CanvasController` — the height/hollow/margin settings, plus a placeholder for more
+### `CanvasController` — the one place a view calls to edit a project
 
 Created one-per-project (`projectController.canvasController`), wrapping
 that `ProjectController` (not a bare `Project`) so every edit still goes
-through its undo stack and mesh pipeline:
+through its undo stack and mesh pipeline. This is the actual command
+surface: everything a view (or a menu, or a palette panel) calls to
+change a project's content lives here, except selection (which lives
+directly on `WandTool`/`BrushSelectTool` - see the tool layer above for
+why a same-signature passthrough here would add nothing):
 
 | method | via |
 |---|---|
 | `transformSelectionLayer(delta)` | `with projectController.editing(affectsMesh=True):` |
 | `setHollow(hollow)` | `with projectController.editing(affectsMesh=True):` |
 | `setMargin(margin)` | `with projectController.editing(affectsMesh=True):` |
-
-Selection (`bucketSelect`/`brushSelect`) is *not* here - see the tool
-layer above for why it lives directly on `WandTool`/`BrushSelectTool`
-instead of a same-signature passthrough on this class.
+| `setCellWidth(mm)`, `setCellHeight(mm)` | `with projectController.editing(signal=projectController.viewSettingsChanged):` — export-only scale, so `affectsMesh` doesn't apply here; these never touch `Mesh`'s own unit-based triangles |
+| `renameColor(index, name)`, `recolorColor(index, rgb)` | `with projectController.editing(signal=projectController.paletteChanged):` |
 
 This is also the settled home for general canvas-view operations that
-are neither project-lifecycle (`ProjectController`'s remaining job:
-saving, undo bookkeeping, mesh pipeline, palette naming, export scale)
-nor a `Tool`'s job (selection, above). The concrete example on the table
-is a future outline overlay for the 2D view; there may be others. Decide
-what goes here as those needs become concrete — don't invent methods
-speculatively.
+don't fit the table above and aren't a `Tool`'s job either. The concrete
+example on the table is a future outline overlay for the 2D view; there
+may be others. Decide what goes here as those needs become concrete —
+don't invent methods speculatively.
 
 ## Views — not yet built
 

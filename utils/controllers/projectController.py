@@ -72,8 +72,12 @@ class ProjectController(QObject):
     the current one finishes - a burst of edits collapses into a single
     follow-up recompute rather than queuing one per edit.
 
-    Canvas editing isn't this class's job: height/hollow/margin live on
-    canvasController (CanvasController), and selection lives directly on
+    This class owns no editing methods of its own - it's the shared
+    infrastructure (undo stack, editing(), the mesh worker, save/dirty
+    state) that everything else edits through, not a second command
+    surface competing with canvasController. Every actual edit
+    (selection, height, hollow/margin, cell scale, palette naming) lives
+    on canvasController (CanvasController) or, for selection, directly on
     the FunctionalTool subclasses in ..tools - both call back into
     editing()/pushUndo()/rebuildMesh() here to stay on this same undo
     stack and mesh pipeline rather than owning their own. Turning a click
@@ -151,18 +155,22 @@ class ProjectController(QObject):
         self._pushUndoNow()
 
     @contextmanager
-    def editing(self, affectsMesh=False):
-        """Wrap one undoable canvas edit: pushUndo() on entry, then either
-        rebuildMesh() or selectionChanged.emit() on exit depending on
-        whether this particular edit can change mesh geometry. Used by
-        canvasController's methods so each one is a single `with` block
+    def editing(self, affectsMesh=False, signal=None):
+        """Wrap one undoable edit: pushUndo() on entry, then either
+        rebuildMesh() (if affectsMesh) or the given signal's .emit() on
+        exit. Exactly one of affectsMesh/signal applies - there's no
+        implicit default signal, since different canvasController methods
+        announce themselves differently (selectionChanged, paletteChanged,
+        viewSettingsChanged). Used by canvasController's methods, and by
+        the FunctionalTool subclasses, so each is a single `with` block
         instead of repeating pushUndo()/emit-or-rebuild by hand."""
+        assert affectsMesh or signal is not None, "editing() needs affectsMesh=True or an explicit signal"
         self.pushUndo()
         yield
         if affectsMesh:
             self.rebuildMesh()
         else:
-            self.selectionChanged.emit()
+            signal.emit()
 
     def _pushUndoNow(self):
         self._undoStack.append(self._snapshot())
@@ -222,29 +230,3 @@ class ProjectController(QObject):
             request, self._pendingMeshRequest = self._pendingMeshRequest, None
             self._startMeshWorker(request)
 
-    # -- export-only view settings (no mesh geometry change) -------------
-    # cellWidth/cellHeight only scale coordinates on export (objExport) -
-    # Mesh's own triangles are unit-based and don't depend on either, so
-    # these don't touch the mesh at all.
-
-    def setCellWidth(self, mm):
-        self.pushUndo()
-        self.project.viewSettings.cellWidth = mm
-        self.viewSettingsChanged.emit()
-
-    def setCellHeight(self, mm):
-        self.pushUndo()
-        self.project.viewSettings.cellHeight = mm
-        self.viewSettingsChanged.emit()
-
-    # -- palette ----------------------------------------------------------
-
-    def renameColor(self, index, name):
-        self.pushUndo()
-        self.project.canvas.palette.rename(index, name)
-        self.paletteChanged.emit()
-
-    def recolorColor(self, index, rgb):
-        self.pushUndo()
-        self.project.canvas.palette.setColor(index, rgb)
-        self.paletteChanged.emit()

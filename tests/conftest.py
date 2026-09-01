@@ -2,6 +2,8 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from utils.data.canvas import Canvas
+from utils.data.project import Project, ViewSettings
+from utils.controllers.projectController import ProjectController
 from .fixtures import make_pixel_art
 
 
@@ -13,6 +15,26 @@ def pixel_art_image():
 @pytest.fixture
 def canvas(pixel_art_image):
     return Canvas(pixel_art_image)
+
+
+@pytest.fixture
+def controller():
+    """A ProjectController (and its canvasController) around a fresh
+    pixel-art Canvas, shared by test_projectController.py and
+    test_canvasController.py."""
+    canvas = Canvas(make_pixel_art())
+    project = Project(canvas, viewSettings=ViewSettings(hollow=False, baseMargin=0))
+    c = ProjectController(project)
+    yield c
+    if c._meshWorker is not None:
+        c._meshWorker.wait()  # don't leave a running QThread dangling past the test
+
+
+def spy(signal):
+    """Collects every emission of `signal` as a list of arg-tuples."""
+    calls = []
+    signal.connect(lambda *args: calls.append(args))
+    return calls
 
 
 @pytest.fixture(scope="session", autouse=True)

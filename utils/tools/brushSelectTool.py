@@ -20,7 +20,7 @@ class BrushSelectTool(FunctionalTool):
         self._dragMode = None
 
     def _stamp(self, controller, pos, mode):
-        with controller.projectController.editing():
+        with controller.projectController.editing(signal=controller.projectController.selectionChanged):
             controller.project.canvas.brushSelect(pos, self.selections["size"], mode=mode)
 
     def onPress(self, controller, pos):
