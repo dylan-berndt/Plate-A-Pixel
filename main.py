@@ -4,13 +4,20 @@ from utils import *
 
 app = QApplication(sys.argv)
 
-root = Grid((12, 12, 12, 12))
+appController = AppController()
+window = AppWindow(appController)
+window.setCanvasArea(CanvasArea(appController, theme=window.theme))
+window.setMeshElement(MeshElement(theme=window.theme))
 
-button = Button(lambda: print("PRESSED")).add(Text("Hello"))
 
-root.add(button, (1, 1), (1, 1))
+def openExportDialog():
+    controller = appController.activeController
+    if controller is None:
+        return
+    ExportDialog(controller, theme=window.theme, parent=window).exec()
 
-window = Window((800, 600), root, caption="Plate A Pixel")
+
+window.setExportHandler(openExportDialog)
 window.show()
 
 sys.exit(app.exec())

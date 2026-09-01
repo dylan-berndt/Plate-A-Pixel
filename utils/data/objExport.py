@@ -28,39 +28,54 @@ def writeObj(triangles, path, cellWidth=MM_PER_UNIT, cellHeight=MM_PER_UNIT):
             f.write(f"f {i + 1} {i + 2} {i + 3}\n")
 
 
-def _colorFolderName(rgb):
-    """A name built directly from an RGB triple, e.g. (30, 30, 200) ->
-    "30_30_200" - so a part's path names its own color outright, instead
-    of a numeric index whose meaning shifts as the palette's size
-    changes between exports (see Mesh._calculateMesh: the base plate's
-    color index is always len(palette), one past the last real color -
-    stable within a single export, but not across two exports with
-    different palette sizes)."""
-    return "_".join(str(int(c)) for c in rgb)
+def unnamedColorIndices(palette):
+    """Palette indices with no name set. Export names each printed part
+    after its color's layer name (see exportMeshObjs) - an unnamed color
+    would produce a meaningless "_partN.obj" filename, so both the save
+    guard and the export flow check this before doing anything (see
+    MenuBar._blockedByUnnamedColors and the export window)."""
+    return [i for i, entry in enumerate(palette) if not entry.name]
+
+
+def duplicateColorNames(palette):
+    """Names shared by more than one palette entry - since export now
+    writes every part flat into one folder (no per-color subfolder),
+    two colors with the same name would silently overwrite each other's
+    files."""
+    counts = {}
+    for entry in palette:
+        if entry.name:
+            counts[entry.name] = counts.get(entry.name, 0) + 1
+    return sorted(name for name, count in counts.items() if count > 1)
 
 
 def exportMeshObjs(mesh, outputDir, cellWidth=MM_PER_UNIT, cellHeight=MM_PER_UNIT):
     """Write one OBJ file per disconnected component in mesh.meshes (a
     color rarely ends up as a single physically connected piece - see
-    Mesh.warnings), one subfolder per real palette color named after its
-    own RGB value, plus a separate "base" subfolder for the base plate
-    (mesh.meshes' last entry - see Mesh._calculateMesh) so it can never
-    be confused with a real color's own folder. Returns the list of file
-    paths written."""
+    Mesh.warnings), flat into outputDir - the destination the user
+    already named via the export window, so this doesn't invent a
+    subfolder of its own - named after its color's own layer name:
+    "{layerName}_part{N}.obj". The base plate (mesh.meshes' last entry -
+    see Mesh._calculateMesh) always uses "base", since it isn't a
+    palette entry and so has no name of its own. Returns the list of
+    file paths written.
+
+    Every real color needs a name before this can produce a sane result
+    (see unnamedColorIndices/duplicateColorNames) - that's enforced by
+    the save guard and the export window, not here, so this function
+    stays a plain writer rather than a second copy of that validation."""
     os.makedirs(outputDir, exist_ok=True)
 
     paths = []
     palette = mesh.canvas.palette
     for colorIndex, components in enumerate(mesh.meshes):
-        folderName = _colorFolderName(palette[colorIndex].color) if colorIndex < len(palette) else "base"
-        colorDir = os.path.join(outputDir, folderName)
+        layerName = palette[colorIndex].name if colorIndex < len(palette) else "base"
 
         for partIndex, triangles in enumerate(components):
             if not triangles:
                 continue
-            os.makedirs(colorDir, exist_ok=True)
-            filename = f"{folderName}_part{partIndex}.obj"
-            path = os.path.join(colorDir, filename)
+            filename = f"{layerName}_part{partIndex}.obj"
+            path = os.path.join(outputDir, filename)
             writeObj(triangles, path, cellWidth=cellWidth, cellHeight=cellHeight)
             paths.append(path)
     return paths
