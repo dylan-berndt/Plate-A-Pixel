@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QWidget, QHBoxLayout
+from PySide6.QtCore import Qt
 
 from .elements import MonoText, Theme
 
@@ -25,6 +26,11 @@ class StatusBar(QWidget):
         self._rightLabel = MonoText("", theme=theme)
         layout.addWidget(self._rightLabel)
 
+        # A bare QWidget doesn't paint a stylesheet's background-color on
+        # its own - only QFrame/QLabel-style widgets do by default - so
+        # this needs to opt in explicitly or the whole bar stays transparent
+        # over whatever's behind it.
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"background: {theme.clay950}; color: {theme.clay200};")
         for label in (self._leftLabel, self._rightLabel):
             label.setStyleSheet(f"font-family: '{theme.monoFontFamily}'; font-size: 9.5px; color: {theme.clay200};")

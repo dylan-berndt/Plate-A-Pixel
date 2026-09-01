@@ -13,6 +13,20 @@ class Text(QLabel):
         super().__init__(text, **kwargs)
         self.setAlignment(Qt.AlignCenter)
 
+    def setStyleSheet(self, styleSheet):
+        # QLabel is itself a QFrame subclass, and Qt auto-enables
+        # WA_StyledBackground the instant any per-instance stylesheet is
+        # set on a widget - without an explicit background property, it
+        # then paints an opaque fill from the inherited palette instead
+        # of staying transparent (this is exactly what made SectionLabel/
+        # MonoText render as a filled pill once nested inside a bordered
+        # QFrame card - see MeshSettingsPanel). Every Text subclass here
+        # only ever styles font/color, so default to transparent unless
+        # the caller's own sheet says otherwise.
+        if "background" not in styleSheet:
+            styleSheet = f"background: transparent; {styleSheet}"
+        super().setStyleSheet(styleSheet)
+
 
 class SectionLabel(Text):
     """A small uppercase, letter-spaced heading - "LAYER"/"PALETTE"/"MESH"
@@ -195,7 +209,14 @@ class SegmentedControl(QWidget):
         outer.setSpacing(0)
 
         frame = QFrame()
-        frame.setStyleSheet(f"QFrame {{ border: 1.5px solid {theme.ink}; border-radius: {theme.borderRadius}px; }}")
+        # QLabel is itself a QFrame subclass in Qt, so a bare "QFrame {...}"
+        # selector would also match any QLabel this frame ever contains
+        # (see the identical fix/note in MeshSettingsPanel) - scoping by
+        # objectName keeps this rule on just this one frame.
+        frame.setObjectName("segmentedControlFrame")
+        frame.setStyleSheet(
+            f"QFrame#segmentedControlFrame {{ border: 1.5px solid {theme.ink}; border-radius: {theme.borderRadius}px; }}"
+        )
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
@@ -262,13 +283,14 @@ class Stepper(QWidget):
     (base margin, cell width/height) track it themselves and call
     setText() after every change."""
 
-    def __init__(self, text: str = "", onIncrement=None, onDecrement=None, theme: Theme = None, **kwargs):
+    def __init__(self, text: str = "", onIncrement=None, onDecrement=None, theme: Theme = None,
+                 vertical: bool = False, **kwargs):
         super().__init__(**kwargs)
         theme = theme or Theme()
 
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self) if vertical else QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(4 if vertical else 6)
 
         buttonStyle = f"""
             QPushButton {{
@@ -279,21 +301,27 @@ class Stepper(QWidget):
         """
         self._minus = QPushButton("−")
         self._plus = QPushButton("+")
+        buttonSize = 40 if vertical else 20
         for button in (self._minus, self._plus):
-            button.setFixedSize(20, 20)
+            button.setFixedSize(buttonSize, 20 if vertical else 20)
             button.setStyleSheet(buttonStyle)
 
         self._label = MonoText(text, theme=theme)
-        self._label.setMinimumWidth(44)
+        # Wide enough for "0.12"/"40 mm"-shaped values even when the
+        # intended Space Mono font isn't installed and Qt substitutes a
+        # wider fallback (no bundled font files - see Theme's docstring).
+        self._label.setMinimumWidth(40 if vertical else 56)
 
         if onDecrement is not None:
             self._minus.clicked.connect(onDecrement)
         if onIncrement is not None:
             self._plus.clicked.connect(onIncrement)
 
-        layout.addWidget(self._minus)
-        layout.addWidget(self._label)
-        layout.addWidget(self._plus)
+        # Vertical order matches the mockup's tool rail: + on top, value,
+        # then - below - not the horizontal -/value/+ reading order.
+        order = (self._plus, self._label, self._minus) if vertical else (self._minus, self._label, self._plus)
+        for widget in order:
+            layout.addWidget(widget)
 
     def setText(self, text: str):
         self._label.setText(text)
@@ -366,6 +394,7 @@ class Tab(QWidget):
     def __init__(self, label: str, active: bool = False, dirty: bool = False,
                  onSelect=None, onClose=None, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._theme = theme or Theme()
         self._active = active
         self._onSelect = onSelect
@@ -427,12 +456,24 @@ class TabBar(QWidget):
         self._onClose = onClose
         self._tabs = []
 
+        # So the strip reads as one continuous bar (matching an inactive
+        # tab's own background) instead of showing the app's default
+        # background through any gap - the trailing space before/after
+        # the "+" button in particular.
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"background: {self._theme.clay800};")
+
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
         self._layout.setAlignment(Qt.AlignLeft)
 
-        self._newTabButton = IconButton(Icons.PLUS, onClick=onNewTab, size=30, theme=self._theme)
+        # Sits directly on TabBar's own dark background (see above), not a
+        # light card, so its icon needs the light/dark swap Tab's own
+        # close button gets for the same reason.
+        self._newTabButton = IconButton(
+            Icons.PLUS, onClick=onNewTab, size=30, iconColor=self._theme.paper, theme=self._theme,
+        )
         self._newTabButton.setStyleSheet("QPushButton { background: transparent; border: none; }")
 
     def setTabs(self, entries):
@@ -447,8 +488,15 @@ class TabBar(QWidget):
         for index, (label, active, dirty) in enumerate(entries):
             tab = Tab(
                 label, active=active, dirty=dirty,
+                # Tab calls onSelect directly in mousePressEvent (no Qt
+                # signal involved), so no bool ever lands in `i` there.
+                # onClose does reach IconButton.clicked though, which
+                # passes its checked:bool positionally to any connected
+                # callable declaring a parameter - the leading `checked`
+                # absorbs that so `i` still falls through to its default
+                # (see the identical note in PaletteRail._rebuild).
                 onSelect=(lambda i=index: self._onSelect(i)) if self._onSelect else None,
-                onClose=(lambda i=index: self._onClose(i)) if self._onClose else None,
+                onClose=(lambda checked=False, i=index: self._onClose(i)) if self._onClose else None,
                 theme=self._theme,
             )
             self._layout.addWidget(tab)
@@ -490,10 +538,34 @@ def buildOptionWidget(option, currentValue, onChange, theme: Theme = None):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        label = SectionLabel(option.name, theme=theme)
-        layout.addWidget(label)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(SectionLabel(option.name, theme=theme))
         bounds = (option.options.get("Minimum", 0), option.options.get("Maximum", 100))
-        layout.addWidget(Slider(bounds, onChange, defaultValue=currentValue))
+        valueField = TextInput()
+        valueField.setFixedWidth(36)
+        valueField.setText(str(currentValue))
+        valueField.setStyleSheet(
+            f"font-family: '{theme.monoFontFamily}'; font-size: 10.5px; padding: 1px 4px;"
+        )
+        header.addWidget(valueField)
+        layout.addLayout(header)
+
+        slider = Slider(bounds, onChange, defaultValue=currentValue)
+        layout.addWidget(slider)
+
+        slider.valueChanged.connect(lambda v: valueField.setText(str(v)))
+
+        def _onFieldEdited():
+            text = valueField.text().strip()
+            if not text.lstrip("-").isdigit():
+                valueField.setText(str(slider.value()))
+                return
+            slider.setValue(min(bounds[1], max(bounds[0], int(text))))
+
+        valueField.editingFinished.connect(_onFieldEdited)
+
         return container
 
     raise NotImplementedError(f"No widget for option type '{option.optionType}'")

@@ -41,6 +41,40 @@ def test_pixel_with_no_neighbors_bulges_the_cap_on_every_side():
     assert (y0, y1) == (2.0, 3.0)  # the cap is always exactly the top unit layer
 
 
+def test_pixel_honors_an_overridden_bulge_size():
+    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST})
+
+    pixel = Pixel(plan, hollow=False, bulgeSize=0.4)
+
+    (x0, x1), (y0, y1), (z0, z1) = _bounds(pixel.solids[0])
+    assert (x0, x1) == (0.0 - 0.4, 1.0 + 0.4)
+    assert (z0, z1) == (0.0 - 0.4, 1.0 + 0.4)
+
+
+def test_pixel_honors_an_overridden_tube_margin():
+    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST})
+
+    default = Pixel(plan, hollow=False)
+    wider = Pixel(plan, hollow=False, tubeMargin=0.3)
+
+    (dx0, dx1), _, _ = _bounds(default.solids[1])
+    (wx0, wx1), _, _ = _bounds(wider.solids[1])
+    assert wx0 > dx0
+    assert wx1 < dx1
+
+
+def test_pixel_honors_an_overridden_wall_thickness():
+    plan = PixelPlan(y=0, x=0, color=0, height=3, bulged={Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST})
+
+    thin = Pixel(plan, hollow=True, wallThickness=0.05)
+    thick = Pixel(plan, hollow=True, wallThickness=0.3)
+
+    (tx0, tx1), _, _ = _bounds(thin.cavities[0])
+    (kx0, kx1), _, _ = _bounds(thick.cavities[0])
+    # a thicker wall leaves a smaller cavity
+    assert (kx1 - kx0) < (tx1 - tx0)
+
+
 def test_pixel_cap_stays_flush_on_a_fused_or_plain_wall_side():
     plan = PixelPlan(y=0, x=0, color=0, height=3, fused={Face.EAST}, bulged={Face.NORTH, Face.WEST})
     # SOUTH has no entry in fused/bulged, so PixelPlan.plainWalls picks it up.

@@ -1,7 +1,7 @@
 import numpy as np
 from .canvas import *
 from .pixelPlan import Face, PixelPlanner
-from .pixelComponents import Pixel, componentTriangles
+from .pixelComponents import Pixel, componentTriangles, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
 
 BASE_HEIGHT = 1
 
@@ -39,11 +39,23 @@ class Mesh:
         # row/column extent on every side - 0 still fills every hole
         # inside the canvas, just without a border past its edge.
         self.baseMargin = 0
+        # Structural geometry parameters passed straight through to every
+        # Pixel (see pixelComponents.py) - world-unit fractions of one grid
+        # cell, not millimeters (cellWidth/cellHeight only scale on export,
+        # see objExport.py). Defaults match pixelComponents.py's own
+        # constants, so leaving these alone reproduces the old fixed
+        # behavior exactly.
+        self.tubeMargin = TUBE_MARGIN
+        self.wallThickness = WALL_THICKNESS
+        self.bulgeSize = BULGE_SIZE
 
         self.mapCache: np.array = None
         self.layerCache: np.array = None
         self.hollowCache = self.hollow
         self.baseMarginCache = self.baseMargin
+        self.tubeMarginCache = self.tubeMargin
+        self.wallThicknessCache = self.wallThickness
+        self.bulgeSizeCache = self.bulgeSize
 
         # meshes[colorIndex] is a list of components - pixels of the same
         # color don't always end up physically connected (see the
@@ -71,7 +83,12 @@ class Mesh:
         )
         hollowChanged = self.hollow != self.hollowCache
         baseMarginChanged = self.baseMargin != self.baseMarginCache
-        return mapChanged or layersChanged or hollowChanged or baseMarginChanged
+        geometryChanged = (
+            self.tubeMargin != self.tubeMarginCache
+            or self.wallThickness != self.wallThicknessCache
+            or self.bulgeSize != self.bulgeSizeCache
+        )
+        return mapChanged or layersChanged or hollowChanged or baseMarginChanged or geometryChanged
 
     def _calculateMesh(self):
         if not self._checkForUpdate():
@@ -81,6 +98,9 @@ class Mesh:
         self.layerCache = self.canvas.layers.copy()
         self.hollowCache = self.hollow
         self.baseMarginCache = self.baseMargin
+        self.tubeMarginCache = self.tubeMargin
+        self.wallThicknessCache = self.wallThickness
+        self.bulgeSizeCache = self.bulgeSize
         self.warnings = []
 
         canvasRows, canvasCols = self.canvas.map.shape
@@ -127,7 +147,10 @@ class Mesh:
                 plan = planner.plan(y, x)
                 if plan is None:
                     continue
-                pixels[(y, x)] = Pixel(plan, self.hollow)
+                pixels[(y, x)] = Pixel(
+                    plan, self.hollow,
+                    tubeMargin=self.tubeMargin, wallThickness=self.wallThickness, bulgeSize=self.bulgeSize,
+                )
                 parent[(y, x)] = (y, x)
 
         for (y, x), pixel in pixels.items():

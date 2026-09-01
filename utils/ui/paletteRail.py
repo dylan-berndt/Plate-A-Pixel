@@ -84,7 +84,14 @@ class PaletteRail(QWidget):
             row = PaletteRow(
                 entry.color, entry.name,
                 onRename=(lambda name, i=index: self._rename(i, name)),
-                onEditColor=(lambda i=index: self._editColor(i)),
+                # onEditColor reaches IconButton.clicked (see PaletteRow),
+                # which always passes its checked:bool positionally to any
+                # connected callable that declares a parameter - even a
+                # defaulted one - so a bare "lambda i=index" silently gets
+                # i=False (index 0!) instead of its default. The leading
+                # `checked` absorbs that bool so `i` actually falls through
+                # to its default.
+                onEditColor=(lambda checked=False, i=index: self._editColor(i)),
                 theme=self._theme,
             )
             self._rowsLayout.addWidget(row)

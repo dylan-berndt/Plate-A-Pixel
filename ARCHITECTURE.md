@@ -37,11 +37,17 @@ when to redraw. It never calls into `utils/data/` directly.
 - **`Mesh`** (`mesh.py`, `pixelPlan.py`, `pixelComponents.py`) — turns
   `Canvas.map`/`.layers` into one printable solid per color via
   `PixelPlanner`/`Pixel`/`componentTriangles`. Recomputes only when its
-  cached copy of `map`/`layers`/`hollow`/`baseMargin` actually changed.
+  cached copy of `map`/`layers`/`hollow`/`baseMargin`/`tubeMargin`/
+  `wallThickness`/`bulgeSize` actually changed. The last three are
+  passed straight through to every `Pixel` (see `pixelComponents.py`'s
+  `TUBE_MARGIN`/`WALL_THICKNESS`/`BULGE_SIZE` constants, which are now
+  just their defaults, not the only values in play) - world-unit
+  fractions of one grid cell, not millimeters.
 - **`Project`** (`project.py`) — one open document: a `Canvas` + its
   `Palette` + a `Mesh` + `ViewSettings` (`hollow`, `baseMargin`,
-  `cellWidth`, `cellHeight` in mm) + `filePath` (where it was last
-  loaded from/saved to, `None` if never saved) + `name`.
+  `cellWidth`, `cellHeight` in mm, `tubeMargin`, `wallThickness`,
+  `bulgeSize`) + `filePath` (where it was last loaded from/saved to,
+  `None` if never saved) + `name`.
   - `Project.save(filePath)` / `Project.load(filePath)` round-trip a
     single `*.pap` zip bundle: `image.png` (the reduced image),
     `layers.npy`, and `project.json` (palette colors/names, view
@@ -205,6 +211,7 @@ why a same-signature passthrough here would add nothing):
 | `transformSelectionLayer(delta)` | `with projectController.editing(affectsMesh=True):` |
 | `setHollow(hollow)` | `with projectController.editing(affectsMesh=True):` |
 | `setMargin(margin)` | `with projectController.editing(affectsMesh=True):` |
+| `setTubeMargin(value)`, `setWallThickness(value)`, `setBulgeSize(value)` | `with projectController.editing(affectsMesh=True):` — these do change `Mesh`'s triangles (see `Pixel` in `pixelComponents.py`), unlike `cellWidth`/`cellHeight` below |
 | `setCellWidth(mm)`, `setCellHeight(mm)` | `with projectController.editing(signal=projectController.viewSettingsChanged):` — export-only scale, so `affectsMesh` doesn't apply here; these never touch `Mesh`'s own unit-based triangles |
 | `renameColor(index, name)`, `recolorColor(index, rgb)` | `with projectController.editing(signal=projectController.paletteChanged):` |
 

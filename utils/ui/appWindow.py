@@ -158,6 +158,10 @@ class AppWindow(QMainWindow):
         controller.viewSettingsChanged.connect(handler)
         controller.meshReady.connect(handler)
         self._rebuildTabs()
+        # A brand-new ProjectController's mesh is never computed until
+        # something edits through editing(affectsMesh=True) - without this,
+        # the 3D view stays empty until the user's first height edit.
+        controller.rebuildMesh()
 
     def _onProjectClosed(self, controller):
         self._rebuildTabs()

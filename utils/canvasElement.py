@@ -159,7 +159,16 @@ class CanvasArtist(QWidget):
             if cell > 0:
                 self._paintImage(painter, canvas, cell, origin)
                 self._paintSelectionOverlay(painter, canvas, cell, origin)
+        else:
+            self._paintEmptyState(painter)
         painter.end()
+
+    def _paintEmptyState(self, painter: QPainter):
+        painter.setPen(QColor(self._theme.clay500))
+        font = painter.font()
+        font.setPointSizeF(max(9.0, font.pointSizeF()))
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignCenter, "Open an image to get started")
 
     def _paintChecker(self, painter: QPainter):
         theme = self._theme

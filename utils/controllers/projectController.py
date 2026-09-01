@@ -27,17 +27,23 @@ class _MeshWorker(QThread):
 
     meshComputed = Signal(object)  # Mesh
 
-    def __init__(self, snapshot, hollow, baseMargin, parent=None):
+    def __init__(self, snapshot, viewSettings, parent=None):
         super().__init__(parent)
         self._snapshot = snapshot
-        self._hollow = hollow
-        self._baseMargin = baseMargin
+        # A plain-dataclass copy (see rebuildMesh) - cellWidth/cellHeight
+        # ride along unused (export-only, see objExport.py) but a whole
+        # ViewSettings is simpler to carry than an ever-growing list of
+        # individual mesh-geometry parameters.
+        self._viewSettings = viewSettings
 
     def run(self):
         mesh = Mesh()
         mesh.canvas = self._snapshot
-        mesh.hollow = self._hollow
-        mesh.baseMargin = self._baseMargin
+        mesh.hollow = self._viewSettings.hollow
+        mesh.baseMargin = self._viewSettings.baseMargin
+        mesh.tubeMargin = self._viewSettings.tubeMargin
+        mesh.wallThickness = self._viewSettings.wallThickness
+        mesh.bulgeSize = self._viewSettings.bulgeSize
         mesh._calculateMesh()
         self.meshComputed.emit(mesh)
 
@@ -203,21 +209,18 @@ class ProjectController(QObject):
     def rebuildMesh(self):
         """Recompute the mesh on a background thread from the project's
         current state - called by canvasController after any edit that
-        can change mesh geometry (height, hollow, baseMargin)."""
+        can change mesh geometry (height, hollow, baseMargin, tubeMargin,
+        wallThickness, bulgeSize)."""
         self.meshInvalidated.emit()
-        request = (
-            _CanvasSnapshot(self.project.canvas),
-            self.project.viewSettings.hollow,
-            self.project.viewSettings.baseMargin,
-        )
+        request = (_CanvasSnapshot(self.project.canvas), replace(self.project.viewSettings))
         if self._meshWorker is not None:
             self._pendingMeshRequest = request
             return
         self._startMeshWorker(request)
 
     def _startMeshWorker(self, request):
-        snapshot, hollow, baseMargin = request
-        self._meshWorker = _MeshWorker(snapshot, hollow, baseMargin, parent=self)
+        snapshot, viewSettings = request
+        self._meshWorker = _MeshWorker(snapshot, viewSettings, parent=self)
         self._meshWorker.meshComputed.connect(self._onMeshComputed)
         self._meshWorker.start()
 

@@ -30,22 +30,23 @@ class Pixel:
     so nothing here has to line up by construction the way independently
     triangulated Cap/Tube/Collar pieces used to."""
 
-    def __init__(self, plan, hollow: bool):
+    def __init__(self, plan, hollow: bool, tubeMargin: float = TUBE_MARGIN,
+                 wallThickness: float = WALL_THICKNESS, bulgeSize: float = BULGE_SIZE):
         self.plan = plan
 
         x0, z0 = float(plan.x), float(plan.y)
         x1, z1 = x0 + 1.0, z0 + 1.0
-        capX0 = x0 - (BULGE_SIZE if Face.WEST in plan.bulged else 0.0)
-        capX1 = x1 + (BULGE_SIZE if Face.EAST in plan.bulged else 0.0)
-        capZ0 = z0 - (BULGE_SIZE if Face.NORTH in plan.bulged else 0.0)
-        capZ1 = z1 + (BULGE_SIZE if Face.SOUTH in plan.bulged else 0.0)
+        capX0 = x0 - (bulgeSize if Face.WEST in plan.bulged else 0.0)
+        capX1 = x1 + (bulgeSize if Face.EAST in plan.bulged else 0.0)
+        capZ0 = z0 - (bulgeSize if Face.NORTH in plan.bulged else 0.0)
+        capZ1 = z1 + (bulgeSize if Face.SOUTH in plan.bulged else 0.0)
         capY0, capY1 = plan.height - 1.0, float(plan.height)
 
         self.solids = [_box(capX0, capX1, capY0, capY1, capZ0, capZ1)]
         self.cavities = []
 
         if capY0 > 0:
-            m = TUBE_MARGIN
+            m = tubeMargin
             # Fused and plain-wall sides need no clearance from their
             # neighbor: the tube sits flush with the grid boundary there
             # instead of inset, so the two tubes' solids actually meet
@@ -60,7 +61,7 @@ class Pixel:
             self.solids.append(_box(tubeX0, tubeX1, 0.0, capY0, tubeZ0, tubeZ1))
 
             if hollow:
-                t = WALL_THICKNESS
+                t = wallThickness
                 cavX0, cavX1 = tubeX0 + t, tubeX1 - t
                 cavZ0, cavZ1 = tubeZ0 + t, tubeZ1 - t
                 if cavX1 > cavX0 and cavZ1 > cavZ0:

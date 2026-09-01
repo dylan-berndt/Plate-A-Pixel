@@ -1,5 +1,6 @@
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QButtonGroup, QFrame
+from PySide6.QtCore import Qt
 
 from .elements import IconButton, Icons, SectionLabel, Stepper, Theme
 
@@ -58,9 +59,12 @@ class ToolRail(QWidget):
         divider.setStyleSheet(f"background: {theme.ink};")
         layout.addWidget(divider)
 
-        layout.addWidget(SectionLabel("Layer", theme=theme))
+        layerLabel = SectionLabel("Layer", theme=theme)
+        layerLabel.setAlignment(Qt.AlignCenter)
+        layout.addWidget(layerLabel)
         self._layerStepper = Stepper(
             "-", onIncrement=self._raiseSelection, onDecrement=self._lowerSelection, theme=theme,
+            vertical=True,
         )
         layout.addWidget(self._layerStepper)
 

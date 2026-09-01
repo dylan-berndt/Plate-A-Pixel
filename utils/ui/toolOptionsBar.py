@@ -15,6 +15,7 @@ class ToolOptionsBar(QWidget):
     def __init__(self, appController, toolController, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         theme = theme or Theme()
+        self._theme = theme
         self._appController = appController
         self._toolController = toolController
 
@@ -60,8 +61,13 @@ class ToolOptionsBar(QWidget):
             widget = buildOptionWidget(
                 option, tool.selections[key],
                 onChange=(lambda value, k=key: tool.selections.__setitem__(k, value)),
+                theme=self._theme,
             )
-            self._optionsLayout.addWidget(widget)
+            self._optionsLayout.addWidget(widget, 0)
+        # Without this, leftover horizontal space in the bar gets
+        # distributed across the option widgets themselves instead of
+        # staying empty - every option would stretch to fill the bar.
+        self._optionsLayout.addStretch(1)
 
     def _undo(self):
         controller = self._appController.activeController

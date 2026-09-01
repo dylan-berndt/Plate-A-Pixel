@@ -10,6 +10,7 @@ from PIL import Image
 from .canvas import Canvas
 from .palette import Palette
 from .mesh import Mesh
+from .pixelComponents import TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
 from .objExport import exportMeshObjs, MM_PER_UNIT
 
 # Bumped whenever project.json's shape changes in a way Project.load needs
@@ -31,6 +32,11 @@ class ViewSettings:
     cellWidth: float = MM_PER_UNIT
     # Millimeters per height-layer in Y - one layer's printed thickness.
     cellHeight: float = MM_PER_UNIT
+    # Structural geometry (see Mesh.tubeMargin/wallThickness/bulgeSize and
+    # pixelComponents.py) - world-unit fractions of one grid cell, not mm.
+    tubeMargin: float = TUBE_MARGIN
+    wallThickness: float = WALL_THICKNESS
+    bulgeSize: float = BULGE_SIZE
 
     def to_dict(self):
         return asdict(self)
@@ -42,6 +48,9 @@ class ViewSettings:
             baseMargin=d.get("baseMargin", 0),
             cellWidth=d.get("cellWidth", MM_PER_UNIT),
             cellHeight=d.get("cellHeight", MM_PER_UNIT),
+            tubeMargin=d.get("tubeMargin", TUBE_MARGIN),
+            wallThickness=d.get("wallThickness", WALL_THICKNESS),
+            bulgeSize=d.get("bulgeSize", BULGE_SIZE),
         )
 
 
@@ -66,6 +75,9 @@ class Project:
         self.mesh.canvas = self.canvas
         self.mesh.hollow = self.viewSettings.hollow
         self.mesh.baseMargin = self.viewSettings.baseMargin
+        self.mesh.tubeMargin = self.viewSettings.tubeMargin
+        self.mesh.wallThickness = self.viewSettings.wallThickness
+        self.mesh.bulgeSize = self.viewSettings.bulgeSize
 
     def rebuildMesh(self):
         """Recomputes the mesh from the canvas's current state and this
