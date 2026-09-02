@@ -736,69 +736,115 @@ def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL
 # ---------------------------------------------------------------------------
 # Alternate implementation, kept side by side with the one above for
 # benchmarking: merge-rectangles-then-union instead of boundary-trace-then-
-# ear-clip. A pixel fused on all four sides is fully interior - not exposed
-# to anything this group needs a wall against - so those merge into big
-# core rectangles at native (unoffset) resolution; any other pixel gets its
-# own single box, offset per side via the exact same _capOffset/_tubeOffset
-# used above. Any overlap between boxes (the classic pinch-point case) is
-# resolved by one CSG union, not by tracing or classifying anything - which
-# is also why pinch points, holes, and reflex corners all just fall out
-# correctly with no special-casing, and why this path can't reproduce the
+# ear-clip. The mask is the group's whole native footprint (every pixel in
+# the group, regardless of fused/bulged/plainWall status) - a real "largest
+# rectangle in a binary grid" scan (histogram + monotonic stack, repeated
+# greedily) decomposes it into a handful of native, unoffset boxes. Bulges
+# (cap) and margin insets (tube) are layered on afterward, per pixel, and
+# any resulting overlap - the classic pinch-point case included - is
+# resolved by one CSG union/difference rather than by tracing or
+# classifying anything. That's also why this path can't reproduce the
 # ear-clip stuck-state bug above: there's no ear-clipping here at all.
 # Solid only for now - no hollow/cavity support yet.
 # ---------------------------------------------------------------------------
 
-def _decomposeIntoRectangles(covered):
-    """Greedy partition of a boolean grid into non-overlapping rectangles
-    that exactly tile the True cells - no gaps, no overlaps, so unioning
-    their boxes needs no seam-matching between them."""
-    rows, cols = covered.shape
-    remaining = covered.copy()
-    rects = []
+def _largestRectangle(mask):
+    """Largest axis-aligned all-True rectangle in a boolean grid, as
+    (r0, c0, r1, c1), via a per-row histogram + monotonic stack scan.
+    None if mask is empty."""
+    rows, cols = mask.shape
+    heights = [0] * cols
+    best, bestArea = None, 0
     for r in range(rows):
-        c = 0
-        while c < cols:
-            if not remaining[r, c]:
-                c += 1
-                continue
-            c1 = c + 1
-            while c1 < cols and remaining[r, c1]:
-                c1 += 1
-            r1 = r + 1
-            while r1 < rows and remaining[r1, c:c1].all():
-                r1 += 1
-            rects.append((r, c, r1, c1))
-            remaining[r:r1, c:c1] = False
-            c = c1
+        row = mask[r]
+        heights = [h + 1 if row[c] else 0 for c, h in enumerate(heights)]
+        stack = []
+        for c in range(cols + 1):
+            h = heights[c] if c < cols else 0
+            start = c
+            while stack and stack[-1][1] >= h:
+                s, sh = stack.pop()
+                area = sh * (c - s)
+                if area > bestArea:
+                    bestArea, best = area, (r - sh + 1, s, r + 1, c)
+                start = s
+            stack.append((start, h))
+    return best
+
+
+def _maximalRectangles(mask):
+    """Partition a boolean grid into rectangles by repeatedly carving out
+    the single largest remaining one until nothing is left."""
+    remaining = mask.copy()
+    rects = []
+    while remaining.any():
+        r0, c0, r1, c1 = _largestRectangle(remaining)
+        rects.append((r0, c0, r1, c1))
+        remaining[r0:r1, c0:c1] = False
     return rects
 
 
-def _gridSolid(planByPos, offsetFn, margin, yBottom, yTop):
-    """One cap or tube solid, built by merging fully-interior pixels into
-    core rectangles and giving every other pixel its own offset box."""
+def _footprintMask(planByPos):
     ys = [p.y for p in planByPos.values()]
     xs = [p.x for p in planByPos.values()]
     minY, minX = min(ys), min(xs)
-    rows, cols = max(ys) - minY + 1, max(xs) - minX + 1
+    mask = np.zeros((max(ys) - minY + 1, max(xs) - minX + 1), dtype=bool)
+    for (y, x) in planByPos:
+        mask[y - minY, x - minX] = True
+    return mask, minY, minX
 
-    interior = np.zeros((rows, cols), dtype=bool)
-    boxes = []
+
+def _coreBoxes(planByPos, yBottom, yTop):
+    mask, minY, minX = _footprintMask(planByPos)
+    return [_box(c0 + minX, c1 + minX, yBottom, yTop, r0 + minY, r1 + minY)
+            for (r0, c0, r1, c1) in _maximalRectangles(mask)]
+
+
+def _gridCapSolid(planByPos, bulgeSize, yBottom, yTop):
+    """Cap solid: core rectangles at native resolution, plus one combined
+    flared box per bulged pixel (all of its bulged sides at once - a
+    separate box per side would leave a gap at a bulged corner)."""
+    boxes = _coreBoxes(planByPos, yBottom, yTop)
+
     for (y, x), plan in planByPos.items():
-        if len(plan.fused) == 4:
-            interior[y - minY, x - minX] = True
+        if not plan.bulged:
             continue
-        x0 = offsetFn('W', 0, 0, planByPos, y, x, margin)
-        x1 = offsetFn('E', 0, 0, planByPos, y, x, margin)
-        z0 = offsetFn('N', 0, 0, planByPos, y, x, margin)
-        z1 = offsetFn('S', 0, 0, planByPos, y, x, margin)
+        x0 = x - bulgeSize if Face.WEST in plan.bulged else x
+        x1 = x + 1 + bulgeSize if Face.EAST in plan.bulged else x + 1
+        z0 = y - bulgeSize if Face.NORTH in plan.bulged else y
+        z1 = y + 1 + bulgeSize if Face.SOUTH in plan.bulged else y + 1
         boxes.append(_box(x0, x1, yBottom, yTop, z0, z1))
-
-    for (r0, c0, r1, c1) in _decomposeIntoRectangles(interior):
-        boxes.append(_box(c0 + minX, c1 + minX, yBottom, yTop, r0 + minY, r1 + minY))
 
     if not boxes:
         return None
     return trimesh.boolean.union(boxes) if len(boxes) > 1 else boxes[0]
+
+
+def _gridTubeSolid(planByPos, tubeMargin, yBottom, yTop):
+    """Tube solid: core rectangles unioned into one solid, then one margin
+    strip per non-flush side of each pixel is subtracted. Unlike the cap's
+    bulges, per-side strips need no combining - a corner between two
+    inset sides comes out right from independent subtractions."""
+    boxes = _coreBoxes(planByPos, yBottom, yTop)
+    if not boxes:
+        return None
+    core = trimesh.boolean.union(boxes) if len(boxes) > 1 else boxes[0]
+
+    cuts = []
+    for (y, x), plan in planByPos.items():
+        flush = plan.flushTubeSides
+        if Face.WEST not in flush:
+            cuts.append(_box(x, x + tubeMargin, yBottom, yTop, y, y + 1))
+        if Face.EAST not in flush:
+            cuts.append(_box(x + 1 - tubeMargin, x + 1, yBottom, yTop, y, y + 1))
+        if Face.NORTH not in flush:
+            cuts.append(_box(x, x + 1, yBottom, yTop, y, y + tubeMargin))
+        if Face.SOUTH not in flush:
+            cuts.append(_box(x, x + 1, yBottom, yTop, y + 1 - tubeMargin, y + 1))
+
+    if not cuts:
+        return core
+    return trimesh.boolean.difference([core, *cuts])
 
 
 def componentTrianglesGrid(plans, tubeMargin=TUBE_MARGIN, bulgeSize=BULGE_SIZE):
@@ -807,11 +853,11 @@ def componentTrianglesGrid(plans, tubeMargin=TUBE_MARGIN, bulgeSize=BULGE_SIZE):
     height = next(iter(plans)).height
     planByPos = {(p.y, p.x): p for p in plans}
 
-    capMesh = _gridSolid(planByPos, _capOffset, bulgeSize, height - 1.0, float(height))
+    capMesh = _gridCapSolid(planByPos, bulgeSize, height - 1.0, float(height))
     if height <= 1:
         return _fromTrimesh(capMesh) if capMesh is not None else []
 
-    tubeMesh = _gridSolid(planByPos, _tubeOffset, tubeMargin, 0.0, height - 1.0)
+    tubeMesh = _gridTubeSolid(planByPos, tubeMargin, 0.0, height - 1.0)
     if tubeMesh is None:
         return _fromTrimesh(capMesh) if capMesh is not None else []
     if capMesh is None:
