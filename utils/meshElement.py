@@ -99,23 +99,37 @@ class _ColorBuffer:
     color gets concatenated into a single VBO, since they all draw with
     the same uColor anyway (see MeshElement._rebuildBuffers)."""
 
-    def __init__(self, color, positions, normals):
+    def __init__(self, color, positions, normals, positionLoc, normalLoc):
         self.color = tuple(c / 255.0 for c in color)
         self.vertexCount = len(positions)
         self.vao = GL.glGenVertexArrays(1)
         GL.glBindVertexArray(self.vao)
 
+        # positionLoc/normalLoc come from glGetAttribLocation on the
+        # linked program (see initializeGL), not hardcoded 0/1: the
+        # shader declares "in vec3 position"/"in vec3 normal" with no
+        # explicit layout(location=...), so the GLSL linker is free to
+        # assign their attribute locations in whatever order it likes -
+        # that's implementation-defined, not part of the spec. NVIDIA's
+        # linker happened to assign them in declaration order (0, 1);
+        # assuming that held on every vendor silently fed position data
+        # into the normal slot and vice versa on at least one Intel Arc
+        # driver, collapsing the rendered geometry into the unit-vector
+        # range while the camera framed itself around the real (correct,
+        # Python-computed) bounding box - i.e. a mesh that's invisible
+        # because it's not where the camera is looking, not because
+        # nothing was drawn.
         self.positionVbo = GL.glGenBuffers(1)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.positionVbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, positions.nbytes, positions, GL.GL_STATIC_DRAW)
-        GL.glEnableVertexAttribArray(0)
-        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(positionLoc)
+        GL.glVertexAttribPointer(positionLoc, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
         self.normalVbo = GL.glGenBuffers(1)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.normalVbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, normals.nbytes, normals, GL.GL_STATIC_DRAW)
-        GL.glEnableVertexAttribArray(1)
-        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(normalLoc)
+        GL.glVertexAttribPointer(normalLoc, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
         GL.glBindVertexArray(0)
 
@@ -185,6 +199,10 @@ class MeshElement(QOpenGLWidget):
             GLShaders.compileShader(VERTEX_SHADER, GL.GL_VERTEX_SHADER),
             GLShaders.compileShader(FRAGMENT_SHADER, GL.GL_FRAGMENT_SHADER),
         )
+        # See the note in _ColorBuffer.__init__ - these are the linker's
+        # actual assigned locations, not assumed 0/1.
+        self._positionLoc = GL.glGetAttribLocation(self._program, "position")
+        self._normalLoc = GL.glGetAttribLocation(self._program, "normal")
 
     def resizeGL(self, w, h):
         GL.glViewport(0, 0, max(1, w), max(1, h))
@@ -241,7 +259,9 @@ class MeshElement(QOpenGLWidget):
             positions, normals = _trianglesToArrays(triangles)
             allPositions.append(positions)
             color = palette[colorIndex].color if colorIndex < len(palette) else BASE_COLOR
-            self._colorBuffers.append(_ColorBuffer(color, positions, normals))
+            self._colorBuffers.append(
+                _ColorBuffer(color, positions, normals, self._positionLoc, self._normalLoc)
+            )
 
         if getattr(self, "_resetCamera", False) and allPositions:
             allPoints = np.concatenate(allPositions, axis=0)

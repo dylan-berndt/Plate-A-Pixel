@@ -1,6 +1,18 @@
 import sys
+from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtWidgets import QApplication
 from utils import *
+
+# MeshElement's shaders are GLSL 150 (GL 3.2) - without requesting that
+# explicitly, the context Qt creates is whatever the platform/driver
+# defaults to, which isn't guaranteed to satisfy that version on every
+# vendor. Must be set before the QApplication is constructed (Qt only
+# reads the default format when it creates the first native GL context).
+glFormat = QSurfaceFormat()
+glFormat.setVersion(3, 2)
+glFormat.setProfile(QSurfaceFormat.CoreProfile)
+glFormat.setDepthBufferSize(24)
+QSurfaceFormat.setDefaultFormat(glFormat)
 
 app = QApplication(sys.argv)
 
