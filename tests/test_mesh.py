@@ -11,7 +11,7 @@ def make_two_color_canvas():
     img = np.zeros((4, 8, 3), dtype=np.uint8)
     img[:, :4] = (30, 30, 200)
     img[:, 4:] = (200, 30, 30)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = -1
     return canvas
 
@@ -74,15 +74,15 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     # blue (taller, height 4) directly left of red (shorter, height 2) - no
     # interlock between them, just two independent solids each bulging its
     # own wall toward the other.
-    two_color_canvas.layers[0, 1] = 4  # blue
-    two_color_canvas.layers[0, 2] = 2  # red
+    two_color_canvas.layers[0, 3] = 4  # blue
+    two_color_canvas.layers[0, 4] = 2  # red
 
     mesh = Mesh()
     mesh.canvas = two_color_canvas
     mesh._calculateMesh()
 
-    blueIndex = two_color_canvas.map[0, 1]
-    redIndex = two_color_canvas.map[0, 2]
+    blueIndex = two_color_canvas.map[0, 3]
+    redIndex = two_color_canvas.map[0, 4]
     assert len(mesh.meshes[blueIndex]) == 1
     assert len(mesh.meshes[redIndex]) == 1
     assert total_triangles(mesh) > 0
@@ -90,14 +90,14 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     from utils.data.pixelComponents import BULGE_SIZE, TUBE_MARGIN
 
     # each pixel's cap bulges toward the other (no same-height neighbor
-    # there), flaring BULGE_SIZE past the shared boundary (x=2) - and
+    # there), flaring BULGE_SIZE past the shared boundary (x=4) - and
     # BULGE_SIZE stays under TUBE_MARGIN specifically so neither cap's
     # bulge ever reaches the other's own (inset) tube.
     assert BULGE_SIZE < TUBE_MARGIN
     blueVerts = mesh.meshes[blueIndex][0]
-    assert max(v.x for v in blueVerts) == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
+    assert max(v.x for v in blueVerts) == pytest.approx(4.0 + BULGE_SIZE, abs=1e-5)
     redVerts = mesh.meshes[redIndex][0]
-    assert min(v.x for v in redVerts) == pytest.approx(2.0 - BULGE_SIZE, abs=1e-5)
+    assert min(v.x for v in redVerts) == pytest.approx(4.0 - BULGE_SIZE, abs=1e-5)
 
 
 def test_diagonal_same_height_pixels_no_longer_bulge_once_the_base_fills_their_flanks(two_color_canvas):
@@ -129,7 +129,7 @@ def test_fully_packed_checkerboard_has_no_bulge_connectivity():
     img[1, 1] = (30, 30, 200)
     img[0, 1] = (200, 30, 30)
     img[1, 0] = (200, 30, 30)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = 3
 
     mesh = Mesh()
@@ -197,7 +197,7 @@ def test_base_plate_fills_a_hole_inside_the_canvas(two_color_canvas):
 def test_base_plate_margin_extends_past_the_canvas_edge():
     img = np.zeros((3, 3, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = -1
     canvas.layers[1, 1] = 3
 
@@ -225,7 +225,7 @@ def test_a_taller_pixel_bulges_against_the_base():
     # pixels of different heights always have - it just bulges.
     img = np.zeros((3, 3, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = -1
     canvas.layers[1, 1] = 3
 
@@ -252,7 +252,7 @@ def test_a_taller_pixel_bulges_against_the_base():
 def test_base_cells_fuse_with_each_other_around_a_hole():
     img = np.zeros((3, 3, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = -1
     canvas.layers[1, 1] = 3  # a single occupied pixel surrounded entirely by holes
 

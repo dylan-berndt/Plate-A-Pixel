@@ -242,6 +242,17 @@ class ProjectController(QObject):
     def _onMeshComputed(self, mesh):
         self.project.mesh = mesh
         worker, self._meshWorker = self._meshWorker, None
+        # meshComputed is the last thing run() does, so by the time this
+        # queued slot fires the thread has already returned in practice -
+        # but Qt's own "is this thread finished" bookkeeping isn't
+        # guaranteed to have settled yet, and deleteLater()-ing a QThread
+        # Qt still considers running aborts the process outright (see
+        # AppController.closeProject for the same hazard on the app-exit
+        # path). wait() here is a no-op wait in the normal case and closes
+        # that race in the rare one - this is exactly the kind of race a
+        # much faster mesh recompute (see Mesh._calculateMesh) makes far
+        # easier to actually hit.
+        worker.wait()
         worker.deleteLater()
         self.meshReady.emit(mesh)
         if self._pendingMeshRequest is not None:

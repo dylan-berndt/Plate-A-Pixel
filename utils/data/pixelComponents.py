@@ -154,46 +154,66 @@ def _mergeCollinear(loop):
     return out
 
 
-def _isConvex(a, b, c):
-    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 1e-12
-
-
-def _pointInTri(p, a, b, c):
-    def sign(p1, p2, p3):
-        return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
-    d1, d2, d3 = sign(p, a, b), sign(p, b, c), sign(p, c, a)
-    hasNeg, hasPos = (d1 < 0 or d2 < 0 or d3 < 0), (d1 > 0 or d2 > 0 or d3 > 0)
-    return not (hasNeg and hasPos)
-
-
 def _earClip(loop):
     """Ear-clipping (dog-ear) triangulation of a simple polygon (list of
     (x, z), any winding - normalized to CCW here). Every loop this module
     builds is a plain orthogonal polygon (only axis-aligned edges), so this
-    never has to handle anything more exotic than that."""
-    poly = list(loop)
-    if _signedArea(poly) < 0:
-        poly.reverse()
+    never has to handle anything more exotic than that.
+
+    The "does any other vertex sit inside this candidate ear" check is
+    O(n) per candidate ear - unavoidable without a fancier data structure
+    - but a big, intricate boundary (the fine-grid pinch fallback's own
+    worst case) can have hundreds of vertices, and that check dominated
+    this function's cost badly enough to show up as the single largest
+    cost in a real 160x160 image's mesh rebuild. Batching it into one
+    vectorized point-in-triangle test over all remaining vertices (same
+    exact math, just done for every point in one array op instead of one
+    Python-level call each) doesn't change the algorithm, just how fast
+    each step of it runs.
+
+    Separately: restarting the search for the *next* ear from scratch
+    after every single clip (rescanning every remaining vertex in order)
+    turns this into roughly O(n) full rescans - each one itself O(n) per
+    candidate - i.e. close to O(n^3) overall on a large polygon, on top of
+    the per-candidate cost above. Clipping a vertex can only change
+    whether its own two former neighbors are ears (nothing else's
+    eligibility depends on a vertex that's no longer there), so a single
+    pointer that only steps back to recheck those two after a clip, and
+    otherwise advances, visits each vertex a bounded number of times
+    instead of rescanning everything on every clip."""
+    poly = np.array(loop, dtype=float)
+    if _signedArea(loop) < 0:
+        poly = poly[::-1]
+    idx = list(range(len(poly)))
     tris = []
+    i = 0
     guard = 0
-    while len(poly) > 3 and guard < 10000:
+    maxGuard = len(idx) * len(idx) + 16
+    while len(idx) > 3 and guard < maxGuard:
         guard += 1
-        n = len(poly)
-        clipped = False
-        for i in range(n):
-            a, b, c = poly[i - 1], poly[i], poly[(i + 1) % n]
-            if not _isConvex(a, b, c):
-                continue
-            if any(p not in (a, b, c) and _pointInTri(p, a, b, c) for p in poly):
-                continue
-            tris.append((a, b, c))
-            del poly[i]
-            clipped = True
-            break
-        if not clipped:
-            break
-    if len(poly) == 3:
-        tris.append((poly[0], poly[1], poly[2]))
+        m = len(idx)
+        k = i % m
+        ia, ib, ic = idx[k - 1], idx[k], idx[(k + 1) % m]
+        a, b, c = poly[ia], poly[ib], poly[ic]
+        isEar = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 1e-12
+        if isEar:
+            others = [j for j in idx if j != ia and j != ib and j != ic]
+            if others:
+                p = poly[others]
+                d1 = (p[:, 0] - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (p[:, 1] - b[1])
+                d2 = (p[:, 0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (p[:, 1] - c[1])
+                d3 = (p[:, 0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (p[:, 1] - a[1])
+                hasNeg = (d1 < 0) | (d2 < 0) | (d3 < 0)
+                hasPos = (d1 > 0) | (d2 > 0) | (d3 > 0)
+                isEar = not bool(np.any(~(hasNeg & hasPos)))
+        if isEar:
+            tris.append((tuple(a), tuple(b), tuple(c)))
+            del idx[k]
+            i = k - 1
+        else:
+            i = k + 1
+    if len(idx) == 3:
+        tris.append((tuple(poly[idx[0]]), tuple(poly[idx[1]]), tuple(poly[idx[2]])))
     return tris
 
 
@@ -213,6 +233,33 @@ def _extrudeSolid(loop, yBottom, yTop):
         triangles += [Vector3(xa, yBottom, za), Vector3(xb, yTop, zb), Vector3(xb, yBottom, zb)]
         triangles += [Vector3(xa, yBottom, za), Vector3(xa, yTop, za), Vector3(xb, yTop, zb)]
     return triangles
+
+
+def _assembleOuterMinusHoles(outer, holes, yBottom, yTop):
+    """Extrude `outer` and `holes` (lists of simple polygons, already
+    classified by winding) and combine them into one solid. Multiple
+    outer loops (or multiple holes) can themselves touch or overlap - the
+    fine grid's whole job is turning an ambiguous single-point touch into
+    real shared area - so concatenating their triangles into one mesh is
+    *not* the same as their union (each piece alone is a valid volume,
+    but the naive concatenation generally isn't, and handing a non-volume
+    to trimesh.boolean.difference raises "Not all meshes are volumes!").
+    So union each side first whenever there's more than one piece, and
+    only then take the one final difference. The overwhelmingly common
+    case - one outer loop, no holes - needs none of that: round-tripping
+    through a full trimesh.Trimesh just to weld vertices nothing else
+    touches is pure overhead when there's nothing to union or subtract."""
+    if not outer:
+        return []
+    if len(outer) == 1 and not holes:
+        return _extrudeSolid(outer[0], yBottom, yTop)
+    outerPieces = [_toTrimesh(_extrudeSolid(loop, yBottom, yTop)) for loop in outer]
+    outerMesh = trimesh.boolean.union(outerPieces) if len(outerPieces) > 1 else outerPieces[0]
+    if not holes:
+        return _fromTrimesh(outerMesh)
+    holePieces = [_toTrimesh(_extrudeSolid(loop, yBottom, yTop)) for loop in holes]
+    holeMesh = trimesh.boolean.union(holePieces) if len(holePieces) > 1 else holePieces[0]
+    return _fromTrimesh(trimesh.boolean.difference([outerMesh, holeMesh]))
 
 
 def _hasPinchPoint(planByPos):
@@ -318,68 +365,206 @@ def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
             continue
         (outer if area > 0 else holes).append(merged)
 
-    outerTris = []
-    for loop in outer:
-        outerTris += _extrudeSolid(loop, yBottom, yTop)
-    if not outerTris:
-        return []
-    if not holes:
-        return outerTris
-    outerMesh = _toTrimesh(outerTris)
-    holeMeshes = [_toTrimesh(_extrudeSolid(h, yBottom, yTop)) for h in holes]
-    return _fromTrimesh(trimesh.boolean.difference([outerMesh] + holeMeshes))
+    return _assembleOuterMinusHoles(outer, holes, yBottom, yTop)
 
 
-def _legacyCapSolid(plans, bulgeSize):
-    """Fallback for the rare pinch-point case: build each pixel's own cap
-    box (exactly the old per-pixel construction) and boolean-union them.
-    Only ever reached when _hasPinchPoint is true, so this being O(pixels)
-    CSG doesn't matter - real mesh.py usage essentially never hits it (the
-    auto base-fill in Mesh._calculateMesh occupies both flanking cells of
-    any diagonal pair, which already suppresses this exact connectivity)."""
-    boxes = []
-    for plan in plans:
-        x0, z0 = float(plan.x), float(plan.y)
-        x1, z1 = x0 + 1.0, z0 + 1.0
-        capX0 = x0 - (bulgeSize if Face.WEST in plan.bulged else 0.0)
-        capX1 = x1 + (bulgeSize if Face.EAST in plan.bulged else 0.0)
-        capZ0 = z0 - (bulgeSize if Face.NORTH in plan.bulged else 0.0)
-        capZ1 = z1 + (bulgeSize if Face.SOUTH in plan.bulged else 0.0)
-        boxes.append(_box(capX0, capX1, plan.height - 1.0, float(plan.height), capZ0, capZ1))
-    merged = trimesh.boolean.union(boxes) if len(boxes) > 1 else boxes[0]
-    return _fromTrimesh(merged)
+def _axisIndex(coords):
+    import bisect
+    return lambda v: bisect.bisect_left(coords, v)
 
 
-def _legacyTubeSolid(plans, tubeMargin):
-    """Tube-side counterpart to _legacyCapSolid - same rare fallback."""
-    boxes = []
-    for plan in plans:
-        if plan.height <= 1:
-            continue
-        x0, z0 = float(plan.x), float(plan.y)
-        x1, z1 = x0 + 1.0, z0 + 1.0
+def _capCoverageFine(planByPos, bulgeSize):
+    """A pinch point (two cells touching at one corner, no shared edge) is
+    only ambiguous because a single grid vertex can't represent both a
+    'yes' and a 'no' at once. Fatten the grid: subdivide each cell's cap
+    footprint into core + one outward margin strip per side (only used
+    when that side is actually bulged), via coordinate compression (not a
+    fixed-size block - see the comment on this same trick in the git
+    history of this module) so neighboring pixels' margins never collide.
+    A genuine diagonal overlap (both cells bulging toward the same empty
+    corner) then shows up as real, non-zero *area* covered by both -
+    which a boundary trace can walk through cleanly, unlike a single
+    ambiguous point. This is the fallback for exactly the group where
+    _hasPinchPoint is true - a handful of pixels, not the whole canvas -
+    so paying a 3x-per-axis grid here costs nothing in practice."""
+    xs = sorted({v for p in planByPos.values() for v in (p.x - bulgeSize, p.x, p.x + 1, p.x + 1 + bulgeSize)})
+    zs = sorted({v for p in planByPos.values() for v in (p.y - bulgeSize, p.y, p.y + 1, p.y + 1 + bulgeSize)})
+    xi, zi = _axisIndex(xs), _axisIndex(zs)
+    covered = np.zeros((len(zs) - 1, len(xs) - 1), dtype=bool)
+
+    for (y, x), plan in planByPos.items():
+        cx0, cx1 = xi(x), xi(x + 1)
+        cz0, cz1 = zi(y), zi(y + 1)
+        covered[cz0:cz1, cx0:cx1] = True
+
+        west, east = Face.WEST in plan.bulged, Face.EAST in plan.bulged
+        north, south = Face.NORTH in plan.bulged, Face.SOUTH in plan.bulged
+        wx0, wx1 = xi(x - bulgeSize), cx0
+        ex0, ex1 = cx1, xi(x + 1 + bulgeSize)
+        nz0, nz1 = zi(y - bulgeSize), cz0
+        sz0, sz1 = cz1, zi(y + 1 + bulgeSize)
+        if west: covered[cz0:cz1, wx0:wx1] = True
+        if east: covered[cz0:cz1, ex0:ex1] = True
+        if north: covered[nz0:nz1, cx0:cx1] = True
+        if south: covered[sz0:sz1, cx0:cx1] = True
+
+        wp, ep = planByPos.get((y, x - 1)), planByPos.get((y, x + 1))
+        np_, sp = planByPos.get((y - 1, x)), planByPos.get((y + 1, x))
+        nw = (west and north) or (wp and Face.NORTH in wp.bulged) or (np_ and Face.WEST in np_.bulged)
+        ne = (east and north) or (ep and Face.NORTH in ep.bulged) or (np_ and Face.EAST in np_.bulged)
+        sw = (west and south) or (wp and Face.SOUTH in wp.bulged) or (sp and Face.WEST in sp.bulged)
+        se = (east and south) or (ep and Face.SOUTH in ep.bulged) or (sp and Face.EAST in sp.bulged)
+        if nw: covered[nz0:nz1, wx0:wx1] = True
+        if ne: covered[nz0:nz1, ex0:ex1] = True
+        if sw: covered[sz0:sz1, wx0:wx1] = True
+        if se: covered[sz0:sz1, ex0:ex1] = True
+
+    return covered, np.array(xs), np.array(zs)
+
+
+def _tubeCoverageFine(planByPos, tubeMargin):
+    """Tube counterpart to _capCoverageFine. Insets never reach into a
+    neighbor's own territory (unlike a bulge), so unlike the cap this
+    needs no neighbor lookups for its corners - self-contained AND."""
+    xs = sorted({v for p in planByPos.values() for v in (p.x, p.x + tubeMargin, p.x + 1 - tubeMargin, p.x + 1)})
+    zs = sorted({v for p in planByPos.values() for v in (p.y, p.y + tubeMargin, p.y + 1 - tubeMargin, p.y + 1)})
+    xi, zi = _axisIndex(xs), _axisIndex(zs)
+    covered = np.zeros((len(zs) - 1, len(xs) - 1), dtype=bool)
+
+    for (y, x), plan in planByPos.items():
+        cx0, cxIn0, cxIn1, cx1 = xi(x), xi(x + tubeMargin), xi(x + 1 - tubeMargin), xi(x + 1)
+        cz0, czIn0, czIn1, cz1 = zi(y), zi(y + tubeMargin), zi(y + 1 - tubeMargin), zi(y + 1)
+        covered[czIn0:czIn1, cxIn0:cxIn1] = True
+
         flush = plan.flushTubeSides
-        m = tubeMargin
-        tubeX0 = x0 if Face.WEST in flush else x0 + m
-        tubeX1 = x1 if Face.EAST in flush else x1 - m
-        tubeZ0 = z0 if Face.NORTH in flush else z0 + m
-        tubeZ1 = z1 if Face.SOUTH in flush else z1 - m
-        boxes.append(_box(tubeX0, tubeX1, 0.0, plan.height - 1.0, tubeZ0, tubeZ1))
-    if not boxes:
-        return []
-    merged = trimesh.boolean.union(boxes) if len(boxes) > 1 else boxes[0]
-    return _fromTrimesh(merged)
+        west, east = Face.WEST in flush, Face.EAST in flush
+        north, south = Face.NORTH in flush, Face.SOUTH in flush
+        if west: covered[czIn0:czIn1, cx0:cxIn0] = True
+        if east: covered[czIn0:czIn1, cxIn1:cx1] = True
+        if north: covered[cz0:czIn0, cxIn0:cxIn1] = True
+        if south: covered[czIn1:cz1, cxIn0:cxIn1] = True
+        if west and north: covered[cz0:czIn0, cx0:cxIn0] = True
+        if east and north: covered[cz0:czIn0, cxIn1:cx1] = True
+        if west and south: covered[czIn1:cz1, cx0:cxIn0] = True
+        if east and south: covered[czIn1:cz1, cxIn1:cx1] = True
+
+    return covered, np.array(xs), np.array(zs)
+
+
+def _traceEdgeDisjointLoops(rawEdges):
+    """Decompose a boundary's directed edges into closed walks, one edge
+    at a time, so this always terminates even if some vertex has more
+    than one outgoing edge - fattening the grid (see _capCoverageFine)
+    resolves *most* pinches into real area, but sufficiently dense
+    dithering can still leave one a fine-grid cell wide, so this has to
+    be robust regardless. At in-degree==out-degree>1 (a vertex two loops
+    still cross at), prefer continuing with the *same cell* the arriving
+    edge belongs to - two edges of one cell's own boundary always belong
+    together - falling back to any remaining edge only if that cell's own
+    continuation was already consumed by an earlier walk through here."""
+    outgoing = {}
+    for kind, r, c in rawEdges:
+        a, b = _rawEndpoints(kind, r, c)
+        outgoing.setdefault(a, []).append((b, kind, r, c))
+
+    loops = []
+    for start in list(outgoing.keys()):
+        while outgoing.get(start):
+            loop = [start]
+            cur = start
+            fromCell = None
+            while True:
+                candidates = outgoing.get(cur)
+                if not candidates:
+                    raise RuntimeError("boundary graph is not balanced - a vertex ran out of outgoing edges")
+                idx = 0
+                if fromCell is not None:
+                    for i, (_, _, r, c) in enumerate(candidates):
+                        if (r, c) == fromCell:
+                            idx = i
+                            break
+                nxt, kind, r, c = candidates.pop(idx)
+                if not candidates:
+                    del outgoing[cur]
+                fromCell = (r, c)
+                if nxt == start:
+                    break
+                loop.append(nxt)
+                cur = nxt
+            loops.append(loop)
+    return loops
+
+
+def _splitSelfTouchingLoop(loop):
+    """A loop from _traceEdgeDisjointLoops can revisit the same vertex
+    more than once (three or more cells meeting at a single point, not
+    just the two _traceEdgeDisjointLoops' same-cell preference cleanly
+    separates) - split it at each repeat into genuinely simple sub-loops
+    before ear-clipping, which doesn't know what to do with a repeated
+    vertex. Splitting at a shared point is exact, not approximate: the
+    original loop's area is exactly the sum of the sub-loops'."""
+    seen = {}
+    for idx, v in enumerate(loop):
+        if v in seen:
+            i = seen[v]
+            return _splitSelfTouchingLoop(loop[i:idx]) + _splitSelfTouchingLoop(loop[:i] + loop[idx:])
+        seen[v] = idx
+    return [loop]
+
+
+def _buildFromFineCoverage(covered, xEdges, zEdges, yBottom, yTop):
+    """Trace `covered`'s boundary loops, dog-ear each independently,
+    extrude. A hole gets one cheap CSG difference against the outer
+    piece(s) - never per pixel.
+
+    (A tempting-looking shortcut here is to skip polygon tracing
+    entirely: take the top/bottom faces straight from a greedy rectangle
+    decomposition of `covered`, and the walls straight from its raw
+    boundary edges with no loop-chaining. That's exactly the kind of
+    independently-triangulated-pieces approach this module's own history
+    (see git log) already tried and reverted once - a rectangle's edge
+    can *partially* border more than one neighbor, and two greedily-
+    merged rectangles' faces then don't share a vertex at the point where
+    that neighbor's coverage changes, leaving a T-junction gap. Dog-ear
+    triangulation of the traced polygon doesn't have that problem because
+    it's one triangulation of one consistent vertex set, not independently
+    built pieces stitched after the fact.)"""
+    def toWorld(v):
+        c, r = v
+        return (float(xEdges[c]), float(zEdges[r]))
+
+    outer, holes = [], []
+    for rawLoop in _traceEdgeDisjointLoops(_rawEdges(covered)):
+        loop = [toWorld(v) for v in rawLoop]
+        for simpleLoop in _splitSelfTouchingLoop(loop):
+            area = _signedArea(simpleLoop)
+            merged = _mergeCollinear(simpleLoop)
+            if len(merged) < 3:
+                continue
+            (outer if area > 0 else holes).append(merged)
+
+    return _assembleOuterMinusHoles(outer, holes, yBottom, yTop)
+
+
+def _fineGridCapSolid(planByPos, bulgeSize, yBottom, yTop):
+    covered, xEdges, zEdges = _capCoverageFine(planByPos, bulgeSize)
+    return _buildFromFineCoverage(covered, xEdges, zEdges, yBottom, yTop)
+
+
+def _fineGridTubeSolid(planByPos, tubeMargin, yTop):
+    covered, xEdges, zEdges = _tubeCoverageFine(planByPos, tubeMargin)
+    return _buildFromFineCoverage(covered, xEdges, zEdges, 0.0, yTop)
 
 
 def _capSolid(planByPos, bulgeSize, yBottom, yTop, usePinchFallback):
     if usePinchFallback:
-        return _legacyCapSolid(list(planByPos.values()), bulgeSize)
+        return _fineGridCapSolid(planByPos, bulgeSize, yBottom, yTop)
     return _buildBoundarySolid(planByPos, _capOffset, bulgeSize, yBottom, yTop, outward=True)
 
 
 def _tubeSolid(planByPos, tubeMargin, yTop, usePinchFallback):
     if usePinchFallback:
-        return _legacyTubeSolid(list(planByPos.values()), tubeMargin)
+        return _fineGridTubeSolid(planByPos, tubeMargin, yTop)
     return _buildBoundarySolid(planByPos, _tubeOffset, tubeMargin, 0.0, yTop, outward=False)
 
 
@@ -419,19 +604,35 @@ def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL
     tube (if any pixel is taller than one layer) is another, and cavities
     are simple per-pixel boxes - CSG is used only to combine those already-
     simplified pieces (a hole cut from a hull, cavities cut from the tube,
-    or the final cap+tube union), never on a per-pixel basis."""
-    planByPos = {(p.y, p.x): p for p in plans}
-    height = next(iter(planByPos.values())).height
-    usePinchFallback = _hasPinchPoint(planByPos)
+    or the final cap+tube union), never on a per-pixel basis.
 
-    capTris = _capSolid(planByPos, bulgeSize, height - 1.0, float(height), usePinchFallback)
+    A pinch point - two cells sharing a corner but no edge, both flanks
+    empty - is a genuine ambiguity for a single boundary trace at native
+    grid resolution (which of the two crossing edges continues the loop?),
+    not a rare case to guess at: this is the exact "pieces don't quite
+    share an edge" failure mode that pushed this codebase to CSG
+    originally. When present, the whole group falls back to a finer
+    (3x-per-axis) grid where a genuine diagonal overlap shows up as real
+    covered area instead of one ambiguous point - so it costs a bigger
+    grid for that one group, not CSG proportional to its pixel count.
+    (An earlier version of this fallback split the group into orthogonally
+    -connected islands and CSG-unioned them back together - cheap when it
+    worked, but boolean-unioning an arbitrary *subset* of what was meant
+    to be one union turned out to not always be numerically reliable, even
+    though unioning the whole original set was. The fine grid sidesteps
+    that by never needing the union in the first place.)"""
+    height = next(iter(plans)).height
+    planByPos = {(p.y, p.x): p for p in plans}
+    pinched = _hasPinchPoint(planByPos)
+
+    capTris = _capSolid(planByPos, bulgeSize, height - 1.0, float(height), pinched)
     if height <= 1:
         return capTris
 
-    tubeTris = _tubeSolid(planByPos, tubeMargin, height - 1.0, usePinchFallback)
+    tubeTris = _tubeSolid(planByPos, tubeMargin, height - 1.0, pinched)
     if hollow:
         cavityTris = []
-        for plan in planByPos.values():
+        for plan in plans:
             cavity = _cavitySolid(plan, tubeMargin, wallThickness)
             if cavity:
                 cavityTris += cavity

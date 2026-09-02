@@ -42,7 +42,7 @@ def test_export_mesh_objs_writes_one_file_per_disconnected_component(tmp_path):
     img = np.zeros((4, 8, 3), dtype=np.uint8)
     img[:, :4] = (30, 30, 200)
     img[:, 4:] = (200, 30, 30)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = -1
     canvas.layers[0, 0] = 3
     canvas.layers[1, 1] = 3       # same color/height, diagonal, disconnected from the above pair for this test
@@ -65,7 +65,7 @@ def test_export_mesh_objs_writes_one_file_per_disconnected_component(tmp_path):
 def test_export_mesh_objs_names_each_file_after_its_color_layer_name(tmp_path):
     img = np.zeros((2, 2, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.palette.rename(0, "Wing Base")
     canvas.layers[:] = -1
     canvas.layers[0, 0] = 3
@@ -83,7 +83,7 @@ def test_export_mesh_objs_names_each_file_after_its_color_layer_name(tmp_path):
 def test_export_mesh_objs_writes_flat_into_outputdir_no_subfolders(tmp_path):
     img = np.zeros((2, 2, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.palette.rename(0, "Wing Base")
     canvas.layers[:] = -1
     canvas.layers[0, 0] = 3
@@ -101,7 +101,7 @@ def test_export_mesh_objs_writes_flat_into_outputdir_no_subfolders(tmp_path):
 def test_export_mesh_objs_names_the_base_plate_base(tmp_path):
     img = np.zeros((2, 2, 3), dtype=np.uint8)
     img[:] = (30, 30, 200)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.palette.rename(0, "Wing Base")
     canvas.layers[:] = -1
     canvas.layers[0, 0] = 3

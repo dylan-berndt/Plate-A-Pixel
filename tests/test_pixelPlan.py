@@ -8,7 +8,7 @@ def make_canvas():
     img = np.zeros((4, 8, 3), dtype=np.uint8)
     img[:, :4] = (30, 30, 200)
     img[:, 4:] = (200, 30, 30)
-    canvas = Canvas(img)
+    canvas = Canvas(img, scale=1)
     canvas.layers[:] = -1
     return canvas
 
@@ -60,11 +60,11 @@ def test_plan_classifies_a_height_difference_as_bulged():
 
 def test_plan_same_height_different_color_is_a_plain_wall():
     canvas = make_canvas()
-    canvas.layers[0, 1] = 3  # blue
-    canvas.layers[0, 2] = 3  # red, same height, different color, adjacent
+    canvas.layers[0, 3] = 3  # blue
+    canvas.layers[0, 4] = 3  # red, same height, different color, adjacent
 
     planner = PixelPlanner(canvas)
-    blue = planner.plan(0, 1)
+    blue = planner.plan(0, 3)
 
     assert Face.EAST not in blue.fused
     assert Face.EAST in blue.plainWalls
@@ -110,7 +110,7 @@ def test_bulge_fires_on_every_side_without_a_same_height_neighbor():
     canvas.layers[0, 0] = 3               # this pixel
     canvas.layers[0, 1] = 3               # east: same color, same height -> fused
     canvas.layers[1, 0] = 3               # south: same height...
-    canvas.map[1, 0] = canvas.map[0, 2]   # ...but a different color -> plain wall
+    canvas.map[1, 0] = canvas.map[0, 4]   # ...but a different color -> plain wall
 
     plan = PixelPlanner(canvas).plan(0, 0)
 
