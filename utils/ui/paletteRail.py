@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QColorDialog
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QColorDialog, QScrollArea
 from PySide6.QtGui import QColor
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 
 from .elements import SectionLabel, PaletteRow, IconButton, Icons, Theme
 
@@ -40,7 +40,28 @@ class PaletteRail(QWidget):
         self._rowsLayout = QVBoxLayout(self._rowsContainer)
         self._rowsLayout.setContentsMargins(0, 0, 0, 0)
         self._rowsLayout.setSpacing(2)
-        outer.addWidget(self._rowsContainer)
+        self._rowsLayout.addStretch(1)
+
+        # A plain container just grows to fit every row, pushing
+        # MeshSettingsPanel further down (and eventually off the bottom of
+        # the window) as colors are added - scrolling instead keeps this
+        # section's height bounded to whatever space it's actually given,
+        # with the row list scrolling internally past that. NoFrame since
+        # the app already draws its own outlines (see AppWindow); no
+        # horizontal scrollbar since rows never exceed the rail's width.
+        scrollArea = QScrollArea()
+        scrollArea.setWidget(self._rowsContainer)
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
+        scrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scrollArea.setStyleSheet("background: transparent;")
+        # A floor of ~2 rows so the list never collapses to nothing when
+        # the right pane is short on space - PaletteRail still yields the
+        # rest of its growth to MeshSettingsPanel below it (see AppWindow's
+        # rightLayout stretch factors).
+        scrollArea.setMinimumHeight(2 * PaletteRow.ROW_HEIGHT)
+        outer.addWidget(scrollArea, 1)
 
         divider = QFrame()
         divider.setFixedHeight(1)
@@ -65,8 +86,6 @@ class PaletteRail(QWidget):
         bgLayout.addWidget(self._backgroundToggle)
         outer.addWidget(backgroundRow)
 
-        outer.addStretch(1)
-
     def _toggleBackground(self, checked):
         self._backgroundVisible = not checked
         self.backgroundVisibilityChanged.emit(self._backgroundVisible)
@@ -86,7 +105,15 @@ class PaletteRail(QWidget):
             item = self._rowsLayout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                # deleteLater(), not setParent(None): takeAt() already
+                # detaches the widget from the layout, so setParent(None)
+                # here would just turn it into an orphaned, independent
+                # top-level window (never shown, but never freed either -
+                # every recolor/rename leaked one more) instead of
+                # actually destroying it. deleteLater() destroys it on the
+                # next event-loop tick while it's still parented, so it
+                # never becomes a window at all.
+                widget.deleteLater()
 
         if self._boundProjectController is None:
             return

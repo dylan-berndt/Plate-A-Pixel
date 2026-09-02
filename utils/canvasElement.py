@@ -1,7 +1,7 @@
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PySide6.QtGui import QPainter, QImage, QColor, QPen
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtGui import QPainter, QImage, QColor, QPen, QPainterPath
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, Signal
 
 from .ui import *
 from .data import *
@@ -23,6 +23,14 @@ class CanvasArtist(QWidget):
     directly would keep showing a color's *original* RGB after a recolor
     (CanvasController.recolorColor only updates the Palette entry)."""
 
+    # Explicit dash pattern (in pen-width units: 3 on, 2 off), not the
+    # predefined Qt.DashLine - its exact period isn't part of the public
+    # API, and _advanceMarch needs to know the true period to wrap the
+    # offset at exactly the right value (wrapping at the wrong value made
+    # the animation visibly jump/"bounce" once per cycle instead of
+    # looping smoothly).
+    _DASH_PATTERN = [3.0, 2.0]
+
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         self._theme = theme or Theme()
@@ -36,6 +44,23 @@ class CanvasArtist(QWidget):
 
         self.setMouseTracking(True)
         self.setAutoFillBackground(False)
+
+        # Marching-ants animation: advances the dash offset on a timer and
+        # only repaints while there's actually a selection to animate, so
+        # an idle canvas isn't repainting itself in the background forever.
+        self._marchOffset = 0.0
+        self._marchTimer = QTimer(self)
+        self._marchTimer.setInterval(80)
+        self._marchTimer.timeout.connect(self._advanceMarch)
+        self._marchTimer.start()
+
+    def _advanceMarch(self):
+        if self._projectController is None:
+            return
+        if not self._projectController.project.canvas.selection.any():
+            return
+        self._marchOffset = (self._marchOffset + 1.0) % sum(self._DASH_PATTERN)
+        self.update()
 
     def bindProject(self, projectController):
         # Redraw on anything that can change what's on screen: a
@@ -226,16 +251,71 @@ class CanvasArtist(QWidget):
         for y, x in zip(ys.tolist(), xs.tolist()):
             painter.drawRect(QRectF(origin.x() + x * cell, origin.y() + y * cell, cell, cell))
 
+        # Pen width (and, since Qt expresses dash lengths in pen-width
+        # units, the dashes with it) scales with the current zoom level:
+        # a fixed screen-pixel pen looks chunky relative to tiny
+        # zoomed-out cells and thin relative to huge zoomed-in ones.
+        penWidth = min(3.0, max(1.0, cell * 0.12))
         pen = QPen(QColor(self._theme.glaze))
-        pen.setWidthF(2.0)
-        pen.setStyle(Qt.DashLine)
+        pen.setWidthF(penWidth)
+        pen.setDashPattern(self._DASH_PATTERN)
+        pen.setDashOffset(self._marchOffset)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        minRow, maxRow, minCol, maxCol = ys.min(), ys.max(), xs.min(), xs.max()
-        painter.drawRect(QRectF(
-            origin.x() + minCol * cell, origin.y() + minRow * cell,
-            (maxCol - minCol + 1) * cell, (maxRow - minRow + 1) * cell,
-        ))
+        painter.drawPath(self._selectionOutlinePath(selection, ys, xs, cell, origin))
+
+    def _selectionOutlinePath(self, selection, ys, xs, cell, origin):
+        """The selection's actual silhouette, not its bounding box: each
+        selected cell contributes only the sides that border an
+        unselected cell (or the canvas edge), so the ants hug the real
+        shape - a plain filled block's interior edges are skipped, but an
+        L-shape or a diagonal pair still outlines correctly.
+
+        Adjacent same-line edges are merged into one continuous run
+        before being added to the path (one moveTo/lineTo per run, not
+        per cell) so the dash pattern flows continuously along a whole
+        straight stretch instead of restarting at every single cell -
+        every restart shares the same animated phase, so a run shorter
+        than one dash+gap period would flip between fully drawn and fully
+        blank in lockstep with its neighbors as the phase animated,
+        which is what read as flickering once cells got small enough
+        (zoomed out) that a single edge no longer spanned a full dash
+        cycle."""
+        rows, cols = selection.shape
+        horizontal, vertical = {}, {}
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            if y == 0 or not selection[y - 1, x]:
+                horizontal.setdefault(y, []).append(x)
+            if y == rows - 1 or not selection[y + 1, x]:
+                horizontal.setdefault(y + 1, []).append(x)
+            if x == 0 or not selection[y, x - 1]:
+                vertical.setdefault(x, []).append(y)
+            if x == cols - 1 or not selection[y, x + 1]:
+                vertical.setdefault(x + 1, []).append(y)
+
+        path = QPainterPath()
+        for lineY, xPositions in horizontal.items():
+            for start, end in self._mergeRuns(xPositions):
+                path.moveTo(origin.x() + start * cell, origin.y() + lineY * cell)
+                path.lineTo(origin.x() + end * cell, origin.y() + lineY * cell)
+        for lineX, yPositions in vertical.items():
+            for start, end in self._mergeRuns(yPositions):
+                path.moveTo(origin.x() + lineX * cell, origin.y() + start * cell)
+                path.lineTo(origin.x() + lineX * cell, origin.y() + end * cell)
+        return path
+
+    @staticmethod
+    def _mergeRuns(positions):
+        """Sorted, deduped run-length merge: [0, 1, 2, 4, 5] ->
+        [(0, 3), (4, 6)] - consecutive integers collapse into one
+        (start, end) span."""
+        runs = []
+        for p in sorted(set(positions)):
+            if runs and runs[-1][1] == p:
+                runs[-1] = (runs[-1][0], p + 1)
+            else:
+                runs.append((p, p + 1))
+        return runs
 
 
 class CanvasArea(QWidget):
