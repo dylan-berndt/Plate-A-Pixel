@@ -161,7 +161,19 @@ def _earClip(loop):
     "is any other vertex inside this ear" check goes vectorized (numpy)
     only once there are enough other points (_VECTORIZE_THRESHOLD) to be
     worth numpy's per-call overhead - most calls are one small quad per
-    pixel group, where a plain Python loop is faster."""
+    pixel group, where a plain Python loop is faster.
+
+    A valid ear always exists on a simple polygon with more than 3
+    vertices in theory - but a real boundary can shrink to a near-zero-
+    area remainder (vertices conceptually collinear but not exactly so
+    once float64 has rounded coordinates like 0.1/0.9 through enough
+    arithmetic), where no candidate clears the strict 1e-12 convexity
+    cutoff. Confirmed directly: that can starve the rotating pointer
+    through its whole guard budget, silently dropping the leftover
+    vertices - a real hole in the cap. So a full pass finding no ear at
+    all falls back to clipping whichever vertex is most convex,
+    containment check waived - progress matters more than a perfect
+    classification once it's down to numerical noise."""
     poly = list(loop)
     if _signedArea(loop) < 0:
         poly = poly[::-1]
@@ -170,6 +182,7 @@ def _earClip(loop):
     i = 0
     guard = 0
     maxGuard = len(idx) * len(idx) + 16
+    noProgress = 0
     while len(idx) > 3 and guard < maxGuard:
         guard += 1
         m = len(idx)
@@ -203,8 +216,23 @@ def _earClip(loop):
             tris.append((a, b, c))
             del idx[k]
             i = k - 1
-        else:
+            noProgress = 0
+            continue
+        noProgress += 1
+        if noProgress < m:
             i = k + 1
+            continue
+        # Stuck: a whole pass found nothing. Clip the most-convex
+        # remaining candidate regardless of containment.
+        def convexity(kk):
+            pa, pb, pc_ = poly[idx[kk - 1]], poly[idx[kk]], poly[idx[(kk + 1) % m]]
+            return (pb[0] - pa[0]) * (pc_[1] - pa[1]) - (pb[1] - pa[1]) * (pc_[0] - pa[0])
+        best = max(range(m), key=convexity)
+        ia, ib, ic = idx[best - 1], idx[best], idx[(best + 1) % m]
+        tris.append((poly[ia], poly[ib], poly[ic]))
+        del idx[best]
+        i = best - 1
+        noProgress = 0
     if len(idx) == 3:
         tris.append((poly[idx[0]], poly[idx[1]], poly[idx[2]]))
     return tris
@@ -536,15 +564,31 @@ _TOUCH_EPSILON = 1e-4
 
 
 def _nudgeTouchingVertex(loop, x, z):
-    """Move `loop`'s (x, z) vertex a hair towards its own centroid."""
-    cx = sum(v[0] for v in loop) / len(loop)
-    cz = sum(v[1] for v in loop) / len(loop)
-    dx, dz = cx - x, cz - z
-    length = (dx * dx + dz * dz) ** 0.5
-    if length == 0:
+    """Replace `loop`'s (x, z) vertex with a tiny two-segment chamfer,
+    cutting the corner instead of moving one point diagonally. Every loop
+    this module builds is strictly orthogonal - moving the vertex
+    diagonally (an earlier version of this) broke that assumption and
+    could make _earClip's ear search genuinely get stuck on a large
+    enough polygon (see its own docstring). A chamfer keeps every edge
+    axis-aligned: pull back epsilon along the incoming edge's own line,
+    step epsilon along the outgoing edge's own line, join with one tiny
+    perpendicular segment."""
+    n = len(loop)
+    i = loop.index((x, z))
+    px, pz = loop[i - 1]
+    nx, nz = loop[(i + 1) % n]
+    d1x, d1z = x - px, z - pz
+    d2x, d2z = nx - x, nz - z
+    len1 = (d1x * d1x + d1z * d1z) ** 0.5
+    len2 = (d2x * d2x + d2z * d2z) ** 0.5
+    if len1 == 0 or len2 == 0:
         return loop
-    nudgedX, nudgedZ = x + dx / length * _TOUCH_EPSILON, z + dz / length * _TOUCH_EPSILON
-    return [(nudgedX, nudgedZ) if v == (x, z) else v for v in loop]
+    d1x, d1z = d1x / len1 * _TOUCH_EPSILON, d1z / len1 * _TOUCH_EPSILON
+    d2x, d2z = d2x / len2 * _TOUCH_EPSILON, d2z / len2 * _TOUCH_EPSILON
+    p1 = (x - d1x, z - d1z)
+    p3 = (x + d2x, z + d2z)
+    p2 = (p1[0] + d2x, p1[1] + d2z)
+    return loop[:i] + [p1, p2, p3] + loop[i + 1:]
 
 
 def _separateTouchingLoops(loops):
@@ -553,8 +597,9 @@ def _separateTouchingLoops(loops):
     single edge there, not a valid 2-manifold (manifold3d doesn't error
     on it, it silently hands back a broken mesh). Only possible when
     there's no bulge margin at that corner to fatten the touch into real
-    area. Nudging one side of each pair a hair towards its own centroid
-    breaks the coincidence - by less than any printer could resolve."""
+    area. Nudging one side of each pair a hair inward (see
+    _nudgeTouchingVertex) breaks the coincidence - by less than any
+    printer could resolve."""
     seen = {}
     result = list(loops)
     for li, loop in enumerate(result):

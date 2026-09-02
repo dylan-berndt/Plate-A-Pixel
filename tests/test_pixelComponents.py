@@ -4,6 +4,7 @@ import pytest
 
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import componentTriangles, BULGE_SIZE, TUBE_MARGIN, WALL_THICKNESS
+from utils.data.pixelComponents import _earClip, _signedArea
 
 
 def _bounds(triangles):
@@ -305,3 +306,39 @@ def test_a_hole_touching_the_outer_boundary_at_one_point_is_still_watertight():
     # the pixel count (14, not 13) - subtracting the 1x1 hole it also
     # traces brings the total back down to exactly the 13 covered cells.
     assert _volume(triangles) == pytest.approx(len(plans), abs=1e-3)
+
+
+def test_ear_clip_makes_progress_on_a_near_degenerate_remainder():
+    # Regression: this exact 82-vertex hole (pulled from a real fire1.png
+    # group after a partially-placed selection was raised) shrinks, after
+    # 78 legitimate clips, to 4 vertices whose float64 coordinates (many
+    # of them .1/.9 fractions accumulated through arithmetic) leave them
+    # collinear enough that no candidate ever clears the strict 1e-12
+    # convexity cutoff. _earClip used to just burn through its whole
+    # guard budget and silently drop those 4 vertices - a real, if tiny,
+    # hole in the resulting cap, with no duplicate or missing *edge* to
+    # show for it since the undiscovered ears never produced triangles
+    # in the first place.
+    loop = [
+        (79.9, 8.9), (80.9, 8.9), (80.9, 6.1), (78.1, 6.1), (78.1, 7.1), (76.9, 7.1), (76.9, 6.1),
+        (75.1, 6.1), (75.1, 7.1), (74.1, 7.1), (74.1, 8.1), (73.1, 8.1), (73.1, 11.1), (72.1, 11.1),
+        (72.1, 14.1), (71.1, 14.1), (71.1, 15.9), (73.1, 15.9), (73.1, 17.1), (72.1, 17.1), (72.1, 17.9),
+        (73.1, 17.9), (73.1, 20.1), (72.1, 20.1), (72.1, 20.9), (73.1, 20.9), (73.1, 22.1), (71.1, 22.1),
+        (71.1, 22.9), (72.1, 22.9), (72.1, 24.1), (70.1, 24.1), (70.1, 24.9), (72.1, 24.9), (72.1, 26.1),
+        (71.1, 26.1), (71.1, 27.1), (70.1, 27.1), (70.1, 27.9), (71.1, 27.9), (71.1, 29.1), (70.1, 29.1),
+        (70.1, 29.9), (71.1, 29.9), (71.1, 31.1), (70.1, 31.1), (70.1, 32.1), (69.1, 32.1), (69.1, 32.9),
+        (70.9, 32.9), (70.9, 31.9), (71.9, 31.9), (71.9, 27.9), (73.9, 27.9), (73.9, 26.9), (77.9, 26.9),
+        (77.9, 25.9), (78.9, 25.9), (78.9, 23.9), (80.1, 23.9), (80.1, 24.9), (80.9, 24.9), (80.9, 23.9),
+        (81.9, 23.9), (81.9, 22.1), (80.9, 22.1), (80.9, 21.1), (78.9, 21.1), (78.9, 20.1), (76.9, 20.1),
+        (76.9, 18.9), (77.9, 18.9), (77.9, 15.1), (76.9, 15.1), (76.9, 13.9), (77.9, 13.9), (77.9, 13.1),
+        (75.9, 13.1), (75.9, 11.9), (77.9, 11.9), (77.9, 10.9), (79.9, 10.9),
+    ]
+
+    triangles = _earClip(loop)
+
+    assert len(triangles) == len(loop) - 2
+    totalArea = sum(
+        0.5 * abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]))
+        for a, b, c in triangles
+    )
+    assert totalArea == pytest.approx(abs(_signedArea(loop)), abs=1e-6)
