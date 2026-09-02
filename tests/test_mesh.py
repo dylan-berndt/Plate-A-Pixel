@@ -1,8 +1,14 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
+import trimesh
+from PIL import Image
 
 from utils.data.canvas import Canvas
 from utils.data.mesh import Mesh
+
+FIRE1_PATH = Path(__file__).resolve().parent.parent / "fire1.png"
 
 
 def make_two_color_canvas():
@@ -265,3 +271,32 @@ def test_base_cells_fuse_with_each_other_around_a_hole():
     # one connected ring around the occupied center, not stay as 8 separate
     # single-cell pieces
     assert len(mesh.meshes[base_index(canvas)]) == 1
+
+
+@pytest.mark.skipif(not FIRE1_PATH.exists(), reason="fire1.png test asset not present")
+def test_raising_a_selection_on_a_real_image_stays_watertight():
+    # Regression: componentTriangles used to convert its cap/tube to a
+    # triangle soup and back to a Trimesh before the final cap+tube union -
+    # trimesh's vertex-welding on that *second* conversion has been
+    # observed to silently break the watertightness the first conversion's
+    # welding had already gotten right, for a big enough/complex enough
+    # mesh (a small hand-built canvas won't reproduce this - it only shows
+    # up on a large, intricate real group, which is exactly why this uses
+    # the real test image rather than a synthetic one). Surfaced as
+    # "Not all meshes are volumes!" the moment a raised selection's tube
+    # got unioned against its cap.
+    img = np.array(Image.open(FIRE1_PATH).convert("RGB"))
+    canvas = Canvas(img)
+    canvas.layers[:] = 1
+    canvas.selection[40:50, 40:50] = True
+    canvas.transformSelection(1)
+
+    mesh = Mesh()
+    mesh.canvas = canvas
+    mesh._calculateMesh()
+
+    for colorMeshes in mesh.meshes:
+        for component in colorMeshes:
+            verts = [(v.x, v.y, v.z) for v in component]
+            faces = [[i, i + 1, i + 2] for i in range(0, len(component), 3)]
+            assert trimesh.Trimesh(vertices=verts, faces=faces, process=True).is_watertight

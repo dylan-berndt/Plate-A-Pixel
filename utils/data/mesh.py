@@ -8,13 +8,11 @@ BASE_HEIGHT = 1
 
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
-    Reading this top-to-bottom: planGrid (pixelPlan.py - the vectorized
-    counterpart to PixelPlanner.plan, used here for the whole grid at once)
-    classifies every cell into fused/bulged/plainWalls per side, componentTriangles
-    turns one connected group's plans directly into a hull (pixelComponents.py),
-    and everything below just wires those together - grouping pixels into
-    physically connected pieces per color and collecting warnings along
-    the way."""
+    planGrid (pixelPlan.py) classifies every cell into fused/bulged/
+    plainWalls per side, componentTriangles (pixelComponents.py) turns one
+    connected group's plans into a hull, and everything below wires those
+    together - grouping pixels into physically connected pieces per color
+    and collecting warnings along the way."""
 
     def __init__(self):
         self.canvas: Canvas = None

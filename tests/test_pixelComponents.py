@@ -274,3 +274,34 @@ def test_ring_around_a_hole_is_watertight_with_area_minus_the_hole():
     outerArea = (3 + 2 * BULGE_SIZE) ** 2
     holeArea = (1 - 2 * BULGE_SIZE) ** 2
     assert _volume(triangles) == pytest.approx(outerArea - holeArea, abs=1e-5)
+
+
+def test_a_hole_touching_the_outer_boundary_at_one_point_is_still_watertight():
+    # Regression: a real 13-pixel group pulled from fire1.png (see
+    # ARCHITECTURE-adjacent history) whose own outline pinches back on
+    # itself with no bulge anywhere to widen the touch (every side here
+    # is fused or a plain wall) - the fine-grid pinch fallback correctly
+    # traces this into one outer loop plus a 1x1 hole, but that hole
+    # touches the outer loop at exactly one vertex. Cutting a hole that
+    # touches its outer boundary via CSG pinches the result to a single
+    # edge there, which isn't a valid 2-manifold - manifold3d doesn't
+    # error on it, it silently hands back a broken mesh instead.
+    rows = {
+        (91, 111): "ES", (91, 112): "SW", (92, 111): "ENS", (92, 112): "NW",
+        (93, 110): "ES", (93, 111): "NW", (94, 110): "NS", (94, 112): "S",
+        (95, 110): "ENS", (95, 111): "EW", (95, 112): "NW",
+        (96, 109): "E", (96, 110): "NW",
+    }
+    letterToFace = {"N": Face.NORTH, "S": Face.SOUTH, "E": Face.EAST, "W": Face.WEST}
+    plans = [
+        PixelPlan(y=y, x=x, color=0, height=1, fused={letterToFace[c] for c in fusedLetters})
+        for (y, x), fusedLetters in rows.items()
+    ]
+
+    triangles = componentTriangles(plans, hollow=False)
+
+    _assertWatertight(triangles)
+    # The pinch makes the traced outer loop's own area 1 unit bigger than
+    # the pixel count (14, not 13) - subtracting the 1x1 hole it also
+    # traces brings the total back down to exactly the 13 covered cells.
+    assert _volume(triangles) == pytest.approx(len(plans), abs=1e-3)

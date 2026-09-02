@@ -38,23 +38,15 @@ def _fromTrimesh(mesh):
 
 
 # ---------------------------------------------------------------------------
-# Boundary construction: PixelPlanner already classifies every side of every
-# pixel as fused/bulged/plainWalls - that *is* the boundary (fused = interior,
-# nothing else exposes a wall there). So a whole connected group's cap or
-# tube hull is built directly from that classification: trace the boundary
-# at native grid resolution, offset each edge by whatever its own pixel+face
-# already dictates (cap: bulgeSize outward if bulged; tube: tubeMargin
-# inward unless flush), dog-ear triangulate, extrude. No boolean CSG for any
-# of that - only a handful of already-simplified pieces (a hole cut from a
-# cap, cavities cut from a tube, or the final cap+tube union) ever go through
-# a boolean op, and each of those is O(1) in canvas size, not O(pixels).
-#
-# See ARCHITECTURE.md-adjacent history: an earlier hand-fitted Cap/Tube/
-# Collar system (pre-dating the plain-box-plus-boolean-union rewrite) was
-# abandoned because independently-triangulated pieces kept not-quite-sharing
-# edges. The difference here is there's exactly one triangulation per whole
-# connected group (not one per pixel) built off a single boundary trace, so
-# there's no seam between independently-built pieces to get wrong.
+# Boundary construction: PixelPlanner's fused/bulged/plainWalls classification
+# *is* the boundary (fused = interior). A connected group's cap or tube hull
+# is built directly from it: trace the boundary at native grid resolution,
+# offset each edge (cap: bulgeSize outward if bulged; tube: tubeMargin inward
+# unless flush), dog-ear triangulate, extrude - one triangulation per group,
+# not per pixel, so there's no seam between independently-built pieces to get
+# wrong. CSG is only ever used to combine a handful of already-simplified
+# pieces (a hole cut from a cap, cavities cut from a tube, the cap+tube
+# union), never per-pixel.
 # ---------------------------------------------------------------------------
 
 _FACE = {'N': Face.NORTH, 'S': Face.SOUTH, 'E': Face.EAST, 'W': Face.WEST}
@@ -159,40 +151,17 @@ def _mergeCollinear(loop):
 
 def _earClip(loop):
     """Ear-clipping (dog-ear) triangulation of a simple polygon (list of
-    (x, z), any winding - normalized to CCW here). Every loop this module
-    builds is a plain orthogonal polygon (only axis-aligned edges), so this
-    never has to handle anything more exotic than that.
+    (x, z), any winding - normalized to CCW here); every loop this module
+    builds is a plain orthogonal polygon.
 
-    The "does any other vertex sit inside this candidate ear" check is
-    O(n) per candidate ear - unavoidable without a fancier data structure
-    - but a big, intricate boundary (the fine-grid pinch fallback's own
-    worst case) can have hundreds of vertices, and that check dominated
-    this function's cost badly enough to show up as the single largest
-    cost in a real 160x160 image's mesh rebuild. Batching it into one
-    vectorized point-in-triangle test over all remaining vertices (same
-    exact math, just done for every point in one array op instead of one
-    Python-level call each) doesn't change the algorithm, just how fast
-    each step of it runs.
-
-    Separately: restarting the search for the *next* ear from scratch
-    after every single clip (rescanning every remaining vertex in order)
-    turns this into roughly O(n) full rescans - each one itself O(n) per
-    candidate - i.e. close to O(n^3) overall on a large polygon, on top of
-    the per-candidate cost above. Clipping a vertex can only change
-    whether its own two former neighbors are ears (nothing else's
-    eligibility depends on a vertex that's no longer there), so a single
-    pointer that only steps back to recheck those two after a clip, and
-    otherwise advances, visits each vertex a bounded number of times
-    instead of rescanning everything on every clip.
-
-    The overwhelming majority of calls, though, are one small orthogonal
-    polygon per pixel group (often a plain quad) - there, building a numpy
-    array up front and doing the containment check as an array op is pure
-    overhead next to just looping the handful of other points in plain
-    Python. So the containment check only goes vectorized once there are
-    enough other points (_VECTORIZE_THRESHOLD) for that overhead to pay
-    for itself - same math either way, just which path pays numpy's
-    per-call dispatch cost."""
+    A clipped vertex can only change whether its own two former neighbors
+    are ears, so a pointer that steps back to recheck just those two
+    (instead of rescanning the whole polygon after every clip) keeps this
+    roughly O(n) instead of O(n^3) on a large boundary. The per-candidate
+    "is any other vertex inside this ear" check goes vectorized (numpy)
+    only once there are enough other points (_VECTORIZE_THRESHOLD) to be
+    worth numpy's per-call overhead - most calls are one small quad per
+    pixel group, where a plain Python loop is faster."""
     poly = list(loop)
     if _signedArea(loop) < 0:
         poly = poly[::-1]
@@ -263,50 +232,39 @@ def _extrudeSolid(loop, yBottom, yTop):
 
 
 def _assembleOuterMinusHoles(outer, holes, yBottom, yTop):
-    """Extrude `outer` and `holes` (lists of simple polygons, already
-    classified by winding) and combine them into one solid. Multiple
-    outer loops (or multiple holes) can themselves touch or overlap - the
-    fine grid's whole job is turning an ambiguous single-point touch into
-    real shared area - so concatenating their triangles into one mesh is
-    *not* the same as their union (each piece alone is a valid volume,
-    but the naive concatenation generally isn't, and handing a non-volume
-    to trimesh.boolean.difference raises "Not all meshes are volumes!").
-    So union each side first whenever there's more than one piece, and
-    only then take the one final difference. The overwhelmingly common
-    case - one outer loop, no holes - needs none of that: round-tripping
-    through a full trimesh.Trimesh just to weld vertices nothing else
-    touches is pure overhead when there's nothing to union or subtract."""
+    """Extrude `outer` and `holes` (already-classified simple polygons)
+    and combine them into one trimesh.Trimesh (None if `outer` is empty).
+    Multiple outer loops (or holes) can touch or overlap, so they're
+    unioned/differenced via CSG rather than concatenated - concatenating
+    independently-valid volumes doesn't generally produce a valid one.
+
+    Returns a Trimesh, not a triangle-soup list, so componentTriangles can
+    feed it straight into the cap+tube union without a round trip through
+    soup: re-converting an already-valid Trimesh to soup and back has been
+    observed to silently break its watertightness (see the regression
+    test this fix came with)."""
     if not outer:
-        return []
-    if len(outer) == 1 and not holes:
-        return _extrudeSolid(outer[0], yBottom, yTop)
+        return None
     outerPieces = [_toTrimesh(_extrudeSolid(loop, yBottom, yTop)) for loop in outer]
     outerMesh = trimesh.boolean.union(outerPieces) if len(outerPieces) > 1 else outerPieces[0]
     if not holes:
-        return _fromTrimesh(outerMesh)
+        return outerMesh
     holePieces = [_toTrimesh(_extrudeSolid(loop, yBottom, yTop)) for loop in holes]
     # meshes[0] - meshes[1:] in one call, rather than unioning the holes
-    # first and then differencing - one boolean pass over N+1 meshes
-    # instead of two passes (an (N-1)-piece union, then a difference).
-    return _fromTrimesh(trimesh.boolean.difference([outerMesh, *holePieces]))
+    # first and then differencing.
+    return trimesh.boolean.difference([outerMesh, *holePieces])
 
 
 def _hasPinchPoint(planByPos):
     """True if two parts of this group touch at a single grid corner with
     no shared edge (e.g. diagonal pixels whose bulges overlap but nothing
-    fuses them) - a real topological ambiguity (which of the two crossing
-    boundary edges continues the loop?), not a rare theoretical case to
-    silently guess at. Cheap to check, and independent of cap vs tube
-    (it's purely about which grid cells are present).
-
-    A grid vertex has more than one outgoing boundary edge exactly in the
-    classic marching-squares saddle case: its two diagonally-opposite
-    cells covered and the other two empty (or vice versa) - a purely local
-    pattern, so this checks it directly with a few shifted-array
-    comparisons instead of tracing every edge with _rawEdges/_rawEndpoints
-    and counting each vertex's degree in a dict (equivalent result, called
-    once per group - including every group that isn't pinched at all - so
-    it's worth it not to pay per-edge Python overhead just to answer yes/no)."""
+    fuses them) - a real topological ambiguity for boundary tracing
+    (which of the two crossing edges continues the loop?), not a rare
+    case to guess at. Checks the classic marching-squares saddle pattern
+    (two diagonally-opposite cells covered, the other two empty) directly
+    via shifted-array comparisons rather than tracing every edge to count
+    vertex degree - cheap, since this runs once per group including every
+    group that isn't pinched at all."""
     ys = [p.y for p in planByPos.values()]
     xs = [p.x for p in planByPos.values()]
     minY, minX = min(ys), min(xs)
@@ -327,20 +285,18 @@ def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
     edge via `offsetFn`, join consecutive edges, ear-clip, extrude. Callers
     must have already ruled out a pinch point (see _hasPinchPoint)."""
     if len(planByPos) == 1:
-        # An isolated single pixel (no fused side, since a fused side
-        # would make it part of a bigger group) has exactly 4 convex
-        # corners - the general trace below would compute exactly this
-        # same rectangle, just by way of a boundary trace, a per-edge dict,
-        # and a join step this doesn't need. Over half of a real dithered
-        # image's groups are lone pixels (see Mesh._calculateMesh's
-        # "Isolated single-pixel part" warnings), so skipping straight to
-        # the answer here is a real win, not a micro-optimization.
+        # An isolated single pixel has exactly 4 convex corners - skip
+        # straight to that rectangle instead of the general trace below.
+        # Over half of a real dithered image's groups are lone pixels
+        # (see Mesh._calculateMesh's "Isolated single-pixel part"
+        # warnings), so this is a real win, not a micro-optimization.
         (y, x), = planByPos.keys()
         x0 = offsetFn('W', 0, 0, planByPos, y, x, margin)
         x1 = offsetFn('E', 0, 0, planByPos, y, x, margin)
         z0 = offsetFn('N', 0, 0, planByPos, y, x, margin)
         z1 = offsetFn('S', 0, 0, planByPos, y, x, margin)
-        return _extrudeSolid([(x0, z0), (x1, z0), (x1, z1), (x0, z1)], yBottom, yTop)
+        loop = [(x0, z0), (x1, z0), (x1, z1), (x0, z1)]
+        return _toTrimesh(_extrudeSolid(loop, yBottom, yTop))
 
     ys = [p.y for p in planByPos.values()]
     xs = [p.x for p in planByPos.values()]
@@ -379,13 +335,11 @@ def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
         for i in range(n):
             prevKind, pr, pc = edgeKinds[i - 1]
             curKind, cr, cc = edgeKinds[i]
-            # rawLoop stores local grid-relative coordinates (see
-            # _rawEndpoints) - offsetFn already converts to world
-            # coordinates internally (via minY/minX), so any raw coordinate
-            # used directly alongside an offset value has to be converted
-            # here too, or a group whose bounding box doesn't start at the
-            # grid origin gets its reflex corners and same-axis offset
-            # transitions built from mismatched local/world coordinates.
+            # rawLoop is in local grid-relative coordinates (see
+            # _rawEndpoints); offsetFn converts to world coordinates
+            # internally, so a raw coordinate used alongside an offset
+            # value needs the same conversion, or a group whose bounding
+            # box doesn't start at the grid origin gets garbled vertices.
             localX, localZ = rawLoop[i]
             rawX, rawZ = localX + minX, localZ + minY
             offPrev = offsetFn(prevKind, pr, pc, planByPos, minY, minX, margin)
@@ -395,20 +349,16 @@ def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
                 prevDir, curDir = _DIR[prevKind], _DIR[curKind]
                 cross = prevDir[0] * curDir[1] - prevDir[1] * curDir[0]
                 if outward or cross > 0:
-                    # Convex corner (either offset direction), or a reflex
-                    # corner with outward (cap-style) offsets: the two
-                    # offset lines actually cross past the raw corner - two
-                    # pixels bulging toward a shared empty corner physically
-                    # overlap there, so their intersection is the real
-                    # boundary point.
+                    # Convex corner, or a reflex corner with outward
+                    # (cap) offsets: the offset lines cross past the raw
+                    # corner, so their intersection is the boundary point.
                     x = offCur if axCur == 'V' else offPrev
                     z = offPrev if axPrev == 'H' else offCur
                     outVerts.append((x, z))
                 else:
-                    # Reflex corner with inward (tube-style) offsets: both
-                    # edges pull *away* from the corner, so they never
-                    # reach each other - the boundary has to route through
-                    # the original raw grid corner instead.
+                    # Reflex corner with inward (tube) offsets: the edges
+                    # pull away from the corner and never meet, so route
+                    # through the original raw grid corner instead.
                     outVerts.append((rawX, offPrev) if axPrev == 'H' else (offPrev, rawZ))
                     outVerts.append((rawX, rawZ))
                     outVerts.append((rawX, offCur) if axCur == 'H' else (offCur, rawZ))
@@ -436,28 +386,21 @@ def _axisIndex(coords):
 
 
 def _capCoverageFine(planByPos, bulgeSize):
-    """A pinch point (two cells touching at one corner, no shared edge) is
-    only ambiguous because a single grid vertex can't represent both a
-    'yes' and a 'no' at once. Fatten the grid: subdivide each cell's cap
-    footprint into core + one outward margin strip per side (only used
-    when that side is actually bulged), via coordinate compression (not a
-    fixed-size block - see the comment on this same trick in the git
-    history of this module) so neighboring pixels' margins never collide.
-    A genuine diagonal overlap (both cells bulging toward the same empty
-    corner) then shows up as real, non-zero *area* covered by both -
-    which a boundary trace can walk through cleanly, unlike a single
-    ambiguous point. This is the fallback for exactly the group where
-    _hasPinchPoint is true - a handful of pixels, not the whole canvas -
-    so paying a 3x-per-axis grid here costs nothing in practice.
+    """A pinch point is ambiguous only because a single grid vertex can't
+    represent both "covered" and "not" at once. Fatten the grid via
+    coordinate compression: subdivide each cell's cap footprint into a
+    core plus one outward margin strip per bulged side, so neighboring
+    pixels' margins never collide. A genuine diagonal overlap then shows
+    up as real covered area a boundary trace can walk through cleanly,
+    instead of one ambiguous point.
 
-    That said, the fallback group can itself be huge (the base plate is
-    one single group covering nearly the whole canvas, and needs only one
-    real pinch anywhere in it to fall back) - so the per-pixel coordinate
-    lookups are done as a handful of batched np.searchsorted calls over
-    every pixel at once rather than one bisect call per pixel per edge;
-    the actual coverage-array writes stay a per-pixel loop since each
-    pixel's covered footprint is a differently-sized rectangle, not
-    something a single vectorized scatter can express."""
+    The fallback group (whichever one has a pinch) can be huge - the base
+    plate is one group covering nearly the whole canvas - so coordinate
+    lookups are batched np.searchsorted calls over every pixel at once
+    rather than one bisect call per pixel per edge; the coverage-array
+    writes stay a per-pixel loop since each pixel's footprint is a
+    differently-sized rectangle, not something one vectorized scatter can
+    express."""
     xs = sorted({v for p in planByPos.values() for v in (p.x - bulgeSize, p.x, p.x + 1, p.x + 1 + bulgeSize)})
     zs = sorted({v for p in planByPos.values() for v in (p.y - bulgeSize, p.y, p.y + 1, p.y + 1 + bulgeSize)})
     xArr, zArr = np.array(xs), np.array(zs)
@@ -537,14 +480,11 @@ def _tubeCoverageFine(planByPos, tubeMargin):
 def _traceEdgeDisjointLoops(rawEdges):
     """Decompose a boundary's directed edges into closed walks, one edge
     at a time, so this always terminates even if some vertex has more
-    than one outgoing edge - fattening the grid (see _capCoverageFine)
-    resolves *most* pinches into real area, but sufficiently dense
-    dithering can still leave one a fine-grid cell wide, so this has to
-    be robust regardless. At in-degree==out-degree>1 (a vertex two loops
-    still cross at), prefer continuing with the *same cell* the arriving
-    edge belongs to - two edges of one cell's own boundary always belong
-    together - falling back to any remaining edge only if that cell's own
-    continuation was already consumed by an earlier walk through here."""
+    than one outgoing edge (fattening the grid resolves *most* pinches,
+    but dense dithering can still leave one). At a vertex two loops cross
+    at, prefer continuing with the *same cell* the arriving edge belongs
+    to - two edges of one cell's own boundary always belong together -
+    falling back to any remaining edge only if that's already taken."""
     outgoing = {}
     for kind, r, c in rawEdges:
         a, b = _rawEndpoints(kind, r, c)
@@ -579,13 +519,10 @@ def _traceEdgeDisjointLoops(rawEdges):
 
 
 def _splitSelfTouchingLoop(loop):
-    """A loop from _traceEdgeDisjointLoops can revisit the same vertex
-    more than once (three or more cells meeting at a single point, not
-    just the two _traceEdgeDisjointLoops' same-cell preference cleanly
-    separates) - split it at each repeat into genuinely simple sub-loops
-    before ear-clipping, which doesn't know what to do with a repeated
-    vertex. Splitting at a shared point is exact, not approximate: the
-    original loop's area is exactly the sum of the sub-loops'."""
+    """A loop from _traceEdgeDisjointLoops can still revisit a vertex
+    (three or more cells meeting at one point) - split it at each repeat
+    into simple sub-loops before ear-clipping. Exact, not approximate:
+    the sub-loops' areas sum to the original."""
     seen = {}
     for idx, v in enumerate(loop):
         if v in seen:
@@ -595,23 +532,52 @@ def _splitSelfTouchingLoop(loop):
     return [loop]
 
 
+_TOUCH_EPSILON = 1e-4
+
+
+def _nudgeTouchingVertex(loop, x, z):
+    """Move `loop`'s (x, z) vertex a hair towards its own centroid."""
+    cx = sum(v[0] for v in loop) / len(loop)
+    cz = sum(v[1] for v in loop) / len(loop)
+    dx, dz = cx - x, cz - z
+    length = (dx * dx + dz * dz) ** 0.5
+    if length == 0:
+        return loop
+    nudgedX, nudgedZ = x + dx / length * _TOUCH_EPSILON, z + dz / length * _TOUCH_EPSILON
+    return [(nudgedX, nudgedZ) if v == (x, z) else v for v in loop]
+
+
+def _separateTouchingLoops(loops):
+    """Two loops - outer/outer, outer/hole, or hole/hole - sharing an
+    exact vertex can't go through CSG: the surface would pinch to a
+    single edge there, not a valid 2-manifold (manifold3d doesn't error
+    on it, it silently hands back a broken mesh). Only possible when
+    there's no bulge margin at that corner to fatten the touch into real
+    area. Nudging one side of each pair a hair towards its own centroid
+    breaks the coincidence - by less than any printer could resolve."""
+    seen = {}
+    result = list(loops)
+    for li, loop in enumerate(result):
+        for v in loop:
+            if v in seen and seen[v] != li:
+                x, z = v
+                result[li] = _nudgeTouchingVertex(result[li], x, z)
+            else:
+                seen[v] = li
+    return result
+
+
 def _buildFromFineCoverage(covered, xEdges, zEdges, yBottom, yTop):
     """Trace `covered`'s boundary loops, dog-ear each independently,
     extrude. A hole gets one cheap CSG difference against the outer
     piece(s) - never per pixel.
 
-    (A tempting-looking shortcut here is to skip polygon tracing
-    entirely: take the top/bottom faces straight from a greedy rectangle
-    decomposition of `covered`, and the walls straight from its raw
-    boundary edges with no loop-chaining. That's exactly the kind of
-    independently-triangulated-pieces approach this module's own history
-    (see git log) already tried and reverted once - a rectangle's edge
-    can *partially* border more than one neighbor, and two greedily-
-    merged rectangles' faces then don't share a vertex at the point where
-    that neighbor's coverage changes, leaving a T-junction gap. Dog-ear
-    triangulation of the traced polygon doesn't have that problem because
-    it's one triangulation of one consistent vertex set, not independently
-    built pieces stitched after the fact.)"""
+    (A greedy rectangle decomposition of `covered` looks like a tempting
+    shortcut here, but a rectangle's edge can partially border more than
+    one neighbor - two greedily-merged rectangles' faces then don't share
+    a vertex where that neighbor's coverage changes, leaving a T-junction
+    gap. Dog-ear triangulation of the traced polygon avoids that: it's
+    one triangulation of one consistent vertex set.)"""
     def toWorld(v):
         c, r = v
         return (float(xEdges[c]), float(zEdges[r]))
@@ -625,6 +591,10 @@ def _buildFromFineCoverage(covered, xEdges, zEdges, yBottom, yTop):
             if len(merged) < 3:
                 continue
             (outer if area > 0 else holes).append(merged)
+
+    if len(outer) + len(holes) > 1:
+        separated = _separateTouchingLoops(outer + holes)
+        outer, holes = separated[:len(outer)], separated[len(outer):]
 
     return _assembleOuterMinusHoles(outer, holes, yBottom, yTop)
 
@@ -672,57 +642,47 @@ def _cavitySolid(plan, tubeMargin, wallThickness):
     if cavX1 <= cavX0 or cavZ1 <= cavZ0:
         return None
     loop = [(cavX0, cavZ0), (cavX1, cavZ0), (cavX1, cavZ1), (cavX0, cavZ1)]
-    return _extrudeSolid(loop, -0.01, plan.height - 1.0)
+    return _toTrimesh(_extrudeSolid(loop, -0.01, plan.height - 1.0))
 
 
 def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL_THICKNESS, bulgeSize=BULGE_SIZE):
     """The merged solid for one physically-connected group of same-color,
     same-height PixelPlans (see Mesh._calculateMesh), as a flat list of
-    Vector3 - 3 per triangle, no shared indices, matching this codebase's
-    usual triangle-soup convention.
+    Vector3 - 3 per triangle, no shared indices (this codebase's usual
+    triangle-soup convention).
 
-    Built directly from each pixel's already-known fused/bulged/flush
-    classification (see the boundary-construction block above) rather than
-    boolean-unioning one box per pixel: the cap is one hull extrusion, the
-    tube (if any pixel is taller than one layer) is another, and cavities
-    are simple per-pixel boxes - CSG is used only to combine those already-
-    simplified pieces (a hole cut from a hull, cavities cut from the tube,
-    or the final cap+tube union), never on a per-pixel basis.
+    Built directly from each pixel's fused/bulged/flush classification
+    rather than boolean-unioning one box per pixel: the cap is one hull
+    extrusion, the tube (if any pixel is taller than one layer) another,
+    cavities simple per-pixel boxes - CSG only ever combines those
+    already-simplified pieces (a hole cut from a hull, cavities cut from
+    a tube, the final cap+tube union), never per-pixel.
 
-    A pinch point - two cells sharing a corner but no edge, both flanks
-    empty - is a genuine ambiguity for a single boundary trace at native
-    grid resolution (which of the two crossing edges continues the loop?),
-    not a rare case to guess at: this is the exact "pieces don't quite
-    share an edge" failure mode that pushed this codebase to CSG
-    originally. When present, the whole group falls back to a finer
-    (3x-per-axis) grid where a genuine diagonal overlap shows up as real
-    covered area instead of one ambiguous point - so it costs a bigger
-    grid for that one group, not CSG proportional to its pixel count.
-    (An earlier version of this fallback split the group into orthogonally
-    -connected islands and CSG-unioned them back together - cheap when it
-    worked, but boolean-unioning an arbitrary *subset* of what was meant
-    to be one union turned out to not always be numerically reliable, even
-    though unioning the whole original set was. The fine grid sidesteps
-    that by never needing the union in the first place.)"""
+    A pinch point (two cells sharing a corner but no edge, both flanks
+    empty) is a genuine ambiguity for a boundary trace at native grid
+    resolution - which of the two crossing edges continues the loop? When
+    present, the whole group falls back to a finer (3x-per-axis) grid
+    where a genuine diagonal overlap shows up as real covered area
+    instead of one ambiguous point."""
     height = next(iter(plans)).height
     planByPos = {(p.y, p.x): p for p in plans}
     pinched = _hasPinchPoint(planByPos)
 
-    capTris = _capSolid(planByPos, bulgeSize, height - 1.0, float(height), pinched)
+    # Everything below stays a Trimesh (not a re-converted triangle-soup)
+    # until the final return - see _assembleOuterMinusHoles for why.
+    capMesh = _capSolid(planByPos, bulgeSize, height - 1.0, float(height), pinched)
     if height <= 1:
-        return capTris
+        return _fromTrimesh(capMesh) if capMesh is not None else []
 
-    tubeTris = _tubeSolid(planByPos, tubeMargin, height - 1.0, pinched)
-    if hollow:
-        cavityTris = []
-        for plan in plans:
-            cavity = _cavitySolid(plan, tubeMargin, wallThickness)
-            if cavity:
-                cavityTris += cavity
-        if cavityTris and tubeTris:
-            tubeTris = _fromTrimesh(trimesh.boolean.difference([_toTrimesh(tubeTris), _toTrimesh(cavityTris)]))
+    tubeMesh = _tubeSolid(planByPos, tubeMargin, height - 1.0, pinched)
+    if hollow and tubeMesh is not None:
+        cavityMeshes = [m for m in (_cavitySolid(plan, tubeMargin, wallThickness) for plan in plans) if m is not None]
+        if cavityMeshes:
+            tubeMesh = trimesh.boolean.difference([tubeMesh, *cavityMeshes])
 
-    if not tubeTris:
-        return capTris
-    merged = trimesh.boolean.union([_toTrimesh(capTris), _toTrimesh(tubeTris)])
+    if tubeMesh is None:
+        return _fromTrimesh(capMesh) if capMesh is not None else []
+    if capMesh is None:
+        return _fromTrimesh(tubeMesh)
+    merged = trimesh.boolean.union([capMesh, tubeMesh])
     return _fromTrimesh(merged)

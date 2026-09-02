@@ -166,10 +166,10 @@ def _shifted(arr, dy, dx, pad):
 
 
 def _codeToFaceSets():
-    """One frozenset per possible 4-bit fused/bulged combination - shared
-    across every cell with that exact combination (nothing ever mutates a
-    PixelPlan's fused/bulged after planGrid builds it), so classifying the
-    whole grid only ever constructs 16 set objects, not one per cell."""
+    """One frozenset per possible 4-bit fused/bulged combination, shared
+    across every cell with that combination (nothing mutates a PixelPlan's
+    fused/bulged after planGrid builds it) - 16 set objects total, not
+    one per cell."""
     return [
         frozenset(face for face in _ALL_FACES if code & _FACE_BITS[face])
         for code in range(1 << len(_ALL_FACES))
@@ -181,16 +181,13 @@ _BULGED_SETS = _codeToFaceSets()
 
 
 def planGrid(map_, layers):
-    """Vectorized equivalent of calling PixelPlanner(_GridView(map_, layers))
-    .plan(y, x) for every cell in the grid: same fused/bulged classification
-    (a side fuses on a same-color same-height neighbor, bulges on an empty
-    or different-height one, and is otherwise a flush plain wall), computed
-    with a handful of whole-grid numpy operations instead of one Python
-    call - and one Face-enum iteration - per cell. PixelPlanner.plan stays
-    the reference single-cell implementation (simpler to read, and what the
-    unit tests exercise directly); Mesh._calculateMesh uses this instead
-    because the per-cell path's overhead dominates runtime on real images.
-    Returns {(y, x): PixelPlan} for every occupied cell."""
+    """Vectorized equivalent of calling PixelPlanner.plan(y, x) for every
+    cell in the grid - same classification, computed with whole-grid numpy
+    ops instead of one Python call (and Face-enum iteration) per cell.
+    PixelPlanner.plan stays the reference implementation the unit tests
+    exercise directly; Mesh._calculateMesh uses this one since the
+    per-cell path's overhead dominates runtime on real images. Returns
+    {(y, x): PixelPlan} for every occupied cell."""
     layers = np.asarray(layers)
     map_ = np.asarray(map_)
     occupied = layers >= 1
@@ -226,13 +223,9 @@ def planGrid(map_, layers):
 
 def fusedPairs(map_, layers):
     """Vectorized: every fused adjacency edge in the grid, each visited
-    once - checking only EAST and SOUTH is enough, since fused is
-    symmetric (a cell's EAST-fused neighbor has that identical edge as its
-    own WEST-fused side), the same "visit from one side" trick planGrid's
-    diagonalPairs and PixelPlanner.diagonalConnections itself already use.
-    Feeds Mesh._calculateMesh's union-find directly instead of it iterating
-    Face for every occupied cell to rediscover the same edges from planGrid's
-    already-computed fused sets."""
+    once - EAST and SOUTH alone are enough since fused is symmetric (a
+    cell's EAST-fused neighbor has that same edge as its own WEST-fused
+    side). Feeds Mesh._calculateMesh's union-find directly."""
     layers = np.asarray(layers)
     map_ = np.asarray(map_)
     occupied = layers >= 1
@@ -249,13 +242,9 @@ def fusedPairs(map_, layers):
 
 
 def diagonalPairs(map_, layers):
-    """Vectorized equivalent of calling PixelPlanner(...).diagonalConnections
-    (y, x) for every occupied (y, x) and keeping the connected pairs: the
-    (SE, NE) diagonal neighbor of every cell, connected exactly when both
-    are the same color and height and both flanking orthogonal cells are
-    empty. Returns a flat list of ((y, x), (ny, nx)) pairs to union - see
-    planGrid for why this exists alongside PixelPlanner.diagonalConnections
-    rather than replacing it."""
+    """Vectorized equivalent of PixelPlanner.diagonalConnections for every
+    occupied cell, keeping only the connected (SE, NE) pairs. Returns a
+    flat list of ((y, x), (ny, nx)) pairs to union."""
     layers = np.asarray(layers)
     map_ = np.asarray(map_)
     occupied = layers >= 1

@@ -69,50 +69,35 @@ class ProjectController(QObject):
     a QWidget.
 
     Undo is a plain stack of whole-state snapshots (layers, selection,
-    palette, view settings) - there isn't enough data in a Project to
-    justify a command pattern with a do/undo pair per operation. Every
-    mutating method (here, on canvasController, and on the Tool
-    subclasses) pushes one snapshot before it acts via pushUndo(), usually
-    through the editing() context manager below; undo()/redo() pop a
-    snapshot and restore it wholesale, then just re-emit everything rather
-    than tracking what specifically changed. Whether undo/redo are
-    currently available is for the view to check (canUndo/canRedo) - no
-    signal fires just for that.
+    palette, view settings) rather than a command pattern - there isn't
+    enough data in a Project to justify one. Every mutating method pushes
+    one snapshot via pushUndo() (usually through editing() below);
+    undo()/redo() pop a snapshot and restore it wholesale, re-emitting
+    everything rather than tracking what changed. canUndo/canRedo are
+    polled by the view - no signal fires just for that.
 
-    A multi-call gesture (a tool's onPress/onDrag/.../onRelease sequence)
-    should undo as one step, not one step per call - beginGesture()/
-    endGesture() bracket that: only the first pushUndo() inside a
-    gesture actually pushes a snapshot, so a BrushSelectTool drag calling
-    editing() fifty times still costs one undo entry.
+    A multi-call gesture (onPress/onDrag/.../onRelease) should undo as
+    one step - beginGesture()/endGesture() bracket that, so only the
+    first pushUndo() inside a gesture actually pushes a snapshot.
 
     Mesh recomputation runs on a background QThread (~0.6s for a full
     image is long enough to visibly stall the UI otherwise): calling
     rebuildMesh() fires meshInvalidated immediately, then meshReady(mesh)
     once the worker finishes. Starting the actual computation is debounced
-    (MESH_DEBOUNCE_MS) rather than immediate: a background QThread keeps
-    the *app* responsive, but CPython's GIL still means the computation and
-    the UI's own Python-level rendering callbacks (paintGL/paintEvent) take
-    turns on one core, and a chain of rebuilds - e.g. mashing a layer's "+"
-    button - visibly stutters if each one starts the instant the edit
-    happens. Repeated edits within the debounce window just keep replacing
-    the pending request and pushing the start back, so a whole burst
-    collapses into one recompute of wherever the user ends up, not one per
-    click; a computation already running when the window elapses is left
-    to finish on its own and picks up the latest pending request the
-    instant it does (see _onMeshComputed) rather than waiting out a second
-    debounce window on top.
+    (MESH_DEBOUNCE_MS) rather than immediate - CPython's GIL means the
+    computation and the UI's own rendering callbacks still take turns on
+    one core, so a chain of rebuilds (e.g. mashing a layer's "+" button)
+    visibly stutters if each edit starts its own recompute immediately.
+    Repeated edits within the window replace the pending request and push
+    the start back, so a burst collapses into one recompute; a computation
+    already running when the window elapses finishes on its own and picks
+    up the latest pending request itself (see _onMeshComputed).
 
     This class owns no editing methods of its own - it's the shared
     infrastructure (undo stack, editing(), the mesh worker, save/dirty
-    state) that everything else edits through, not a second command
-    surface competing with canvasController. Every actual edit
-    (selection, height, hollow/margin, cell scale, palette naming) lives
-    on canvasController (CanvasController) or, for selection, directly on
-    the FunctionalTool subclasses in ..tools - both call back into
-    editing()/pushUndo()/rebuildMesh() here to stay on this same undo
-    stack and mesh pipeline rather than owning their own. Turning a click
-    into one of those calls isn't this class's job either - see
-    ToolController in this package."""
+    state) that canvasController and the FunctionalTool subclasses in
+    ..tools edit through, so they share one undo stack and mesh pipeline.
+    Turning a click into one of those calls is ToolController's job."""
 
     selectionChanged = Signal()
     paletteChanged = Signal()
@@ -254,11 +239,9 @@ class ProjectController(QObject):
         if self._pendingMeshRequest is None:
             return
         if self._meshWorker is not None:
-            # A worker from before this debounce window is still running -
-            # _onMeshComputed checks isActive() on this same timer, sees it
-            # no longer running, and starts the pending request itself the
-            # moment that worker finishes, rather than this timer having to
-            # fire a second time.
+            # A worker from before this window is still running -
+            # _onMeshComputed starts the pending request itself once it
+            # finishes (it checks isActive() on this same timer).
             return
         request, self._pendingMeshRequest = self._pendingMeshRequest, None
         self._startMeshWorker(request)
@@ -272,24 +255,19 @@ class ProjectController(QObject):
     def _onMeshComputed(self, mesh):
         self.project.mesh = mesh
         worker, self._meshWorker = self._meshWorker, None
-        # meshComputed is the last thing run() does, so by the time this
-        # queued slot fires the thread has already returned in practice -
-        # but Qt's own "is this thread finished" bookkeeping isn't
-        # guaranteed to have settled yet, and deleteLater()-ing a QThread
-        # Qt still considers running aborts the process outright (see
-        # AppController.closeProject for the same hazard on the app-exit
-        # path). wait() here is a no-op wait in the normal case and closes
-        # that race in the rare one - this is exactly the kind of race a
-        # much faster mesh recompute (see Mesh._calculateMesh) makes far
-        # easier to actually hit.
+        # Qt's "is this thread finished" bookkeeping can lag behind
+        # run() actually returning, and deleteLater()-ing a QThread Qt
+        # still considers running aborts the process (see
+        # AppController.closeProject for the same hazard on app exit).
+        # wait() is a no-op in the normal case and closes that race in
+        # the rare one.
         worker.wait()
         worker.deleteLater()
         self.meshReady.emit(mesh)
-        # Only start the pending request immediately if the debounce window
-        # has already elapsed (it fired while this worker was still busy,
-        # found _meshWorker set, and left the request for us here) - if the
-        # timer is still counting down, edits are still coming in, and
-        # _onMeshDebounceElapsed will start it once they actually stop.
+        # Start the pending request now only if the debounce window has
+        # already elapsed (it fired while this worker was busy and left
+        # the request here) - otherwise edits are still coming in, and
+        # _onMeshDebounceElapsed will start it once they stop.
         if self._pendingMeshRequest is not None and not self._meshDebounceTimer.isActive():
             request, self._pendingMeshRequest = self._pendingMeshRequest, None
             self._startMeshWorker(request)
