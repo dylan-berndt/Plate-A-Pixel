@@ -26,12 +26,15 @@ def _toTrimesh(triangles):
 
 
 def _fromTrimesh(mesh):
-    triangles = []
-    for face in mesh.faces:
-        for vertexIndex in face:
-            x, y, z = mesh.vertices[vertexIndex]
-            triangles.append(Vector3(float(x), float(y), float(z)))
-    return triangles
+    # One fancy-index gather instead of a nested Python loop re-fetching
+    # mesh.vertices (a cached property, but still a per-access call) once
+    # per (face, corner) pair - same triangle-soup result, far fewer calls
+    # on a mesh with thousands of faces.
+    # .tolist() converts the whole gathered array to plain Python floats in
+    # one call - iterating the numpy array directly would instead re-box
+    # each of the three coordinates as a numpy scalar on every row.
+    verts = mesh.vertices[mesh.faces.reshape(-1)].tolist()
+    return [Vector3(x, y, z) for x, y, z in verts]
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +183,17 @@ def _earClip(loop):
     eligibility depends on a vertex that's no longer there), so a single
     pointer that only steps back to recheck those two after a clip, and
     otherwise advances, visits each vertex a bounded number of times
-    instead of rescanning everything on every clip."""
-    poly = np.array(loop, dtype=float)
+    instead of rescanning everything on every clip.
+
+    The overwhelming majority of calls, though, are one small orthogonal
+    polygon per pixel group (often a plain quad) - there, building a numpy
+    array up front and doing the containment check as an array op is pure
+    overhead next to just looping the handful of other points in plain
+    Python. So the containment check only goes vectorized once there are
+    enough other points (_VECTORIZE_THRESHOLD) for that overhead to pay
+    for itself - same math either way, just which path pays numpy's
+    per-call dispatch cost."""
+    poly = list(loop)
     if _signedArea(loop) < 0:
         poly = poly[::-1]
     idx = list(range(len(poly)))
@@ -199,22 +211,37 @@ def _earClip(loop):
         if isEar:
             others = [j for j in idx if j != ia and j != ib and j != ic]
             if others:
-                p = poly[others]
-                d1 = (p[:, 0] - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (p[:, 1] - b[1])
-                d2 = (p[:, 0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (p[:, 1] - c[1])
-                d3 = (p[:, 0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (p[:, 1] - a[1])
-                hasNeg = (d1 < 0) | (d2 < 0) | (d3 < 0)
-                hasPos = (d1 > 0) | (d2 > 0) | (d3 > 0)
-                isEar = not bool(np.any(~(hasNeg & hasPos)))
+                if len(others) >= _VECTORIZE_THRESHOLD:
+                    p = np.array([poly[j] for j in others])
+                    d1 = (p[:, 0] - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (p[:, 1] - b[1])
+                    d2 = (p[:, 0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (p[:, 1] - c[1])
+                    d3 = (p[:, 0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (p[:, 1] - a[1])
+                    hasNeg = (d1 < 0) | (d2 < 0) | (d3 < 0)
+                    hasPos = (d1 > 0) | (d2 > 0) | (d3 > 0)
+                    isEar = not bool(np.any(~(hasNeg & hasPos)))
+                else:
+                    for j in others:
+                        px, pz = poly[j]
+                        d1 = (px - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (pz - b[1])
+                        d2 = (px - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (pz - c[1])
+                        d3 = (px - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (pz - a[1])
+                        hasNeg = d1 < 0 or d2 < 0 or d3 < 0
+                        hasPos = d1 > 0 or d2 > 0 or d3 > 0
+                        if not (hasNeg and hasPos):
+                            isEar = False
+                            break
         if isEar:
-            tris.append((tuple(a), tuple(b), tuple(c)))
+            tris.append((a, b, c))
             del idx[k]
             i = k - 1
         else:
             i = k + 1
     if len(idx) == 3:
-        tris.append((tuple(poly[idx[0]]), tuple(poly[idx[1]]), tuple(poly[idx[2]])))
+        tris.append((poly[idx[0]], poly[idx[1]], poly[idx[2]]))
     return tris
+
+
+_VECTORIZE_THRESHOLD = 16
 
 
 def _extrudeSolid(loop, yBottom, yTop):
@@ -258,8 +285,10 @@ def _assembleOuterMinusHoles(outer, holes, yBottom, yTop):
     if not holes:
         return _fromTrimesh(outerMesh)
     holePieces = [_toTrimesh(_extrudeSolid(loop, yBottom, yTop)) for loop in holes]
-    holeMesh = trimesh.boolean.union(holePieces) if len(holePieces) > 1 else holePieces[0]
-    return _fromTrimesh(trimesh.boolean.difference([outerMesh, holeMesh]))
+    # meshes[0] - meshes[1:] in one call, rather than unioning the holes
+    # first and then differencing - one boolean pass over N+1 meshes
+    # instead of two passes (an (N-1)-piece union, then a difference).
+    return _fromTrimesh(trimesh.boolean.difference([outerMesh, *holePieces]))
 
 
 def _hasPinchPoint(planByPos):
@@ -268,7 +297,16 @@ def _hasPinchPoint(planByPos):
     fuses them) - a real topological ambiguity (which of the two crossing
     boundary edges continues the loop?), not a rare theoretical case to
     silently guess at. Cheap to check, and independent of cap vs tube
-    (it's purely about which grid cells are present)."""
+    (it's purely about which grid cells are present).
+
+    A grid vertex has more than one outgoing boundary edge exactly in the
+    classic marching-squares saddle case: its two diagonally-opposite
+    cells covered and the other two empty (or vice versa) - a purely local
+    pattern, so this checks it directly with a few shifted-array
+    comparisons instead of tracing every edge with _rawEdges/_rawEndpoints
+    and counting each vertex's degree in a dict (equivalent result, called
+    once per group - including every group that isn't pinched at all - so
+    it's worth it not to pay per-edge Python overhead just to answer yes/no)."""
     ys = [p.y for p in planByPos.values()]
     xs = [p.x for p in planByPos.values()]
     minY, minX = min(ys), min(xs)
@@ -276,11 +314,11 @@ def _hasPinchPoint(planByPos):
     covered = np.zeros((rows, cols), dtype=bool)
     for (y, x) in planByPos:
         covered[y - minY, x - minX] = True
-    outgoing = {}
-    for kind, r, c in _rawEdges(covered):
-        a, _ = _rawEndpoints(kind, r, c)
-        outgoing[a] = outgoing.get(a, 0) + 1
-    return any(n > 1 for n in outgoing.values())
+    padded = np.pad(covered, 1, constant_values=False)
+    nw, ne = padded[:-1, :-1], padded[:-1, 1:]
+    sw, se = padded[1:, :-1], padded[1:, 1:]
+    saddle = (nw & se & ~ne & ~sw) | (ne & sw & ~nw & ~se)
+    return bool(np.any(saddle))
 
 
 def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
@@ -288,6 +326,22 @@ def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
     boundary at native grid resolution from `planByPos`, offset each raw
     edge via `offsetFn`, join consecutive edges, ear-clip, extrude. Callers
     must have already ruled out a pinch point (see _hasPinchPoint)."""
+    if len(planByPos) == 1:
+        # An isolated single pixel (no fused side, since a fused side
+        # would make it part of a bigger group) has exactly 4 convex
+        # corners - the general trace below would compute exactly this
+        # same rectangle, just by way of a boundary trace, a per-edge dict,
+        # and a join step this doesn't need. Over half of a real dithered
+        # image's groups are lone pixels (see Mesh._calculateMesh's
+        # "Isolated single-pixel part" warnings), so skipping straight to
+        # the answer here is a real win, not a micro-optimization.
+        (y, x), = planByPos.keys()
+        x0 = offsetFn('W', 0, 0, planByPos, y, x, margin)
+        x1 = offsetFn('E', 0, 0, planByPos, y, x, margin)
+        z0 = offsetFn('N', 0, 0, planByPos, y, x, margin)
+        z1 = offsetFn('S', 0, 0, planByPos, y, x, margin)
+        return _extrudeSolid([(x0, z0), (x1, z0), (x1, z1), (x0, z1)], yBottom, yTop)
+
     ys = [p.y for p in planByPos.values()]
     xs = [p.x for p in planByPos.values()]
     minY, minX = min(ys), min(xs)
@@ -325,7 +379,15 @@ def _buildBoundarySolid(planByPos, offsetFn, margin, yBottom, yTop, outward):
         for i in range(n):
             prevKind, pr, pc = edgeKinds[i - 1]
             curKind, cr, cc = edgeKinds[i]
-            rawX, rawZ = rawLoop[i]
+            # rawLoop stores local grid-relative coordinates (see
+            # _rawEndpoints) - offsetFn already converts to world
+            # coordinates internally (via minY/minX), so any raw coordinate
+            # used directly alongside an offset value has to be converted
+            # here too, or a group whose bounding box doesn't start at the
+            # grid origin gets its reflex corners and same-axis offset
+            # transitions built from mismatched local/world coordinates.
+            localX, localZ = rawLoop[i]
+            rawX, rawZ = localX + minX, localZ + minY
             offPrev = offsetFn(prevKind, pr, pc, planByPos, minY, minX, margin)
             offCur = offsetFn(curKind, cr, cc, planByPos, minY, minX, margin)
             axPrev, axCur = _axis(prevKind), _axis(curKind)
@@ -386,27 +448,48 @@ def _capCoverageFine(planByPos, bulgeSize):
     which a boundary trace can walk through cleanly, unlike a single
     ambiguous point. This is the fallback for exactly the group where
     _hasPinchPoint is true - a handful of pixels, not the whole canvas -
-    so paying a 3x-per-axis grid here costs nothing in practice."""
+    so paying a 3x-per-axis grid here costs nothing in practice.
+
+    That said, the fallback group can itself be huge (the base plate is
+    one single group covering nearly the whole canvas, and needs only one
+    real pinch anywhere in it to fall back) - so the per-pixel coordinate
+    lookups are done as a handful of batched np.searchsorted calls over
+    every pixel at once rather than one bisect call per pixel per edge;
+    the actual coverage-array writes stay a per-pixel loop since each
+    pixel's covered footprint is a differently-sized rectangle, not
+    something a single vectorized scatter can express."""
     xs = sorted({v for p in planByPos.values() for v in (p.x - bulgeSize, p.x, p.x + 1, p.x + 1 + bulgeSize)})
     zs = sorted({v for p in planByPos.values() for v in (p.y - bulgeSize, p.y, p.y + 1, p.y + 1 + bulgeSize)})
-    xi, zi = _axisIndex(xs), _axisIndex(zs)
+    xArr, zArr = np.array(xs), np.array(zs)
     covered = np.zeros((len(zs) - 1, len(xs) - 1), dtype=bool)
 
-    for (y, x), plan in planByPos.items():
-        cx0, cx1 = xi(x), xi(x + 1)
-        cz0, cz1 = zi(y), zi(y + 1)
-        covered[cz0:cz1, cx0:cx1] = True
+    positions = list(planByPos.keys())
+    ysArr = np.array([p[0] for p in positions], dtype=float)
+    xsArr = np.array([p[1] for p in positions], dtype=float)
+    cx0 = np.searchsorted(xArr, xsArr).tolist()
+    cx1 = np.searchsorted(xArr, xsArr + 1).tolist()
+    cz0 = np.searchsorted(zArr, ysArr).tolist()
+    cz1 = np.searchsorted(zArr, ysArr + 1).tolist()
+    wx0 = np.searchsorted(xArr, xsArr - bulgeSize).tolist()
+    ex1 = np.searchsorted(xArr, xsArr + 1 + bulgeSize).tolist()
+    nz0 = np.searchsorted(zArr, ysArr - bulgeSize).tolist()
+    sz1 = np.searchsorted(zArr, ysArr + 1 + bulgeSize).tolist()
+
+    for i, (y, x) in enumerate(positions):
+        plan = planByPos[(y, x)]
+        cx0i, cx1i, cz0i, cz1i = cx0[i], cx1[i], cz0[i], cz1[i]
+        covered[cz0i:cz1i, cx0i:cx1i] = True
 
         west, east = Face.WEST in plan.bulged, Face.EAST in plan.bulged
         north, south = Face.NORTH in plan.bulged, Face.SOUTH in plan.bulged
-        wx0, wx1 = xi(x - bulgeSize), cx0
-        ex0, ex1 = cx1, xi(x + 1 + bulgeSize)
-        nz0, nz1 = zi(y - bulgeSize), cz0
-        sz0, sz1 = cz1, zi(y + 1 + bulgeSize)
-        if west: covered[cz0:cz1, wx0:wx1] = True
-        if east: covered[cz0:cz1, ex0:ex1] = True
-        if north: covered[nz0:nz1, cx0:cx1] = True
-        if south: covered[sz0:sz1, cx0:cx1] = True
+        wx0i, wx1i = wx0[i], cx0i
+        ex0i, ex1i = cx1i, ex1[i]
+        nz0i, nz1i = nz0[i], cz0i
+        sz0i, sz1i = cz1i, sz1[i]
+        if west: covered[cz0i:cz1i, wx0i:wx1i] = True
+        if east: covered[cz0i:cz1i, ex0i:ex1i] = True
+        if north: covered[nz0i:nz1i, cx0i:cx1i] = True
+        if south: covered[sz0i:sz1i, cx0i:cx1i] = True
 
         wp, ep = planByPos.get((y, x - 1)), planByPos.get((y, x + 1))
         np_, sp = planByPos.get((y - 1, x)), planByPos.get((y + 1, x))
@@ -414,12 +497,12 @@ def _capCoverageFine(planByPos, bulgeSize):
         ne = (east and north) or (ep and Face.NORTH in ep.bulged) or (np_ and Face.EAST in np_.bulged)
         sw = (west and south) or (wp and Face.SOUTH in wp.bulged) or (sp and Face.WEST in sp.bulged)
         se = (east and south) or (ep and Face.SOUTH in ep.bulged) or (sp and Face.EAST in sp.bulged)
-        if nw: covered[nz0:nz1, wx0:wx1] = True
-        if ne: covered[nz0:nz1, ex0:ex1] = True
-        if sw: covered[sz0:sz1, wx0:wx1] = True
-        if se: covered[sz0:sz1, ex0:ex1] = True
+        if nw: covered[nz0i:nz1i, wx0i:wx1i] = True
+        if ne: covered[nz0i:nz1i, ex0i:ex1i] = True
+        if sw: covered[sz0i:sz1i, wx0i:wx1i] = True
+        if se: covered[sz0i:sz1i, ex0i:ex1i] = True
 
-    return covered, np.array(xs), np.array(zs)
+    return covered, xArr, zArr
 
 
 def _tubeCoverageFine(planByPos, tubeMargin):

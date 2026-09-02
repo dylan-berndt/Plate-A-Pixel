@@ -194,14 +194,20 @@ def test_component_triangles_of_a_diagonal_pair_merges_when_bulges_overlap():
     assert len(mesh.split(only_watertight=False)) == 1
 
 
-def _lShapePlans(height, fusedSuffix=Face):
+def _lShapePlans(height, fusedSuffix=Face, offsetY=0, offsetX=0):
     """Three pixels forming a concave (reflex) corner: (0,0)-(0,1)-(1,0),
     missing (1,1) - the case that first exposed a real join-rule bug in
-    this module's boundary construction (see its history)."""
+    this module's boundary construction (see its history). offsetY/offsetX
+    shift the whole shape away from the grid origin without changing its
+    geometry - see test_concave_l_shape_tall_hollow_is_watertight_away_from
+    _the_grid_origin for why that matters."""
     return [
-        PixelPlan(y=0, x=0, color=0, height=height, fused={Face.EAST, Face.SOUTH}, bulged={Face.NORTH, Face.WEST}),
-        PixelPlan(y=0, x=1, color=0, height=height, fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH}),
-        PixelPlan(y=1, x=0, color=0, height=height, fused={Face.NORTH}, bulged={Face.WEST, Face.SOUTH, Face.EAST}),
+        PixelPlan(y=offsetY + 0, x=offsetX + 0, color=0, height=height,
+                  fused={Face.EAST, Face.SOUTH}, bulged={Face.NORTH, Face.WEST}),
+        PixelPlan(y=offsetY + 0, x=offsetX + 1, color=0, height=height,
+                  fused={Face.WEST}, bulged={Face.NORTH, Face.EAST, Face.SOUTH}),
+        PixelPlan(y=offsetY + 1, x=offsetX + 0, color=0, height=height,
+                  fused={Face.NORTH}, bulged={Face.WEST, Face.SOUTH, Face.EAST}),
     ]
 
 
@@ -224,6 +230,29 @@ def test_concave_l_shape_tall_hollow_is_watertight():
 
     _assertWatertight(triangles)
     assert _volume(triangles) > 0
+
+
+def test_concave_l_shape_tall_hollow_is_watertight_away_from_the_grid_origin():
+    # Regression: _buildBoundarySolid's reflex-corner and same-axis-offset
+    # branches used the raw boundary loop's *local* grid-relative
+    # coordinates directly instead of translating them into the same world
+    # coordinates offsetFn already returns - invisible for a group whose
+    # bounding box happens to start at (0, 0) (minY == minX == 0 makes the
+    # translation a no-op), which is exactly why every other test above
+    # missed it. Any group anchored away from the origin - i.e. almost
+    # every group in a real multi-color image - got garbled vertices at
+    # those points instead, which only ever surfaced downstream as
+    # "Not all meshes are volumes!" once a group's cap and tube were
+    # unioned (see Mesh._calculateMesh's cap+tube union).
+    triangles = componentTriangles(_lShapePlans(height=4, offsetY=10, offsetX=14), hollow=True)
+
+    _assertWatertight(triangles)
+    assert _volume(triangles) > 0
+    # the shape itself is unchanged, just translated - bounds should land
+    # exactly offsetX/offsetY past where the origin-anchored version does.
+    (x0, x1), _, (z0, z1) = _bounds(triangles)
+    assert x0 < 14.0 < x1
+    assert z0 < 10.0 < z1
 
 
 def test_ring_around_a_hole_is_watertight_with_area_minus_the_hole():

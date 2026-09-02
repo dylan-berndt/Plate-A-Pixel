@@ -1,7 +1,7 @@
 import numpy as np
 
 from utils.data.canvas import Canvas
-from utils.data.pixelPlan import Face, PixelPlanner
+from utils.data.pixelPlan import Face, PixelPlanner, planGrid, fusedPairs, diagonalPairs
 
 
 def make_canvas():
@@ -141,3 +141,59 @@ def test_diagonal_connection_false_when_a_flanking_cell_is_occupied():
     connections = dict(PixelPlanner(canvas).diagonalConnections(0, 0))
 
     assert connections[(1, 1)] is False
+
+
+def test_planGrid_and_pairs_match_the_per_cell_reference_on_random_grids():
+    # planGrid/fusedPairs/diagonalPairs (pixelPlan.py) are vectorized
+    # equivalents of PixelPlanner.plan/.diagonalConnections, used by
+    # Mesh._calculateMesh because the per-cell path's overhead dominates
+    # runtime on a real image - this is the actual proof they agree with
+    # the reference single-cell implementation the rest of this file tests
+    # directly, across randomized grids rather than one hand-picked case.
+    class GridView:
+        def __init__(self, map_, layers):
+            self.map = map_
+            self.layers = layers
+
+        def positionValid(self, pos):
+            y, x = pos
+            rows, cols = self.map.shape
+            return 0 <= y < rows and 0 <= x < cols
+
+    rng = np.random.default_rng(42)
+    for _ in range(20):
+        rows, cols = int(rng.integers(3, 12)), int(rng.integers(3, 12))
+        layers = rng.integers(-1, 4, size=(rows, cols))
+        map_ = rng.integers(0, 3, size=(rows, cols))
+        planner = PixelPlanner(GridView(map_, layers))
+
+        refPlans = {}
+        for y in range(rows):
+            for x in range(cols):
+                plan = planner.plan(y, x)
+                if plan is not None:
+                    refPlans[(y, x)] = plan
+
+        gotPlans = planGrid(map_, layers)
+        assert set(refPlans.keys()) == set(gotPlans.keys())
+        for pos, ref in refPlans.items():
+            got = gotPlans[pos]
+            assert (ref.color, ref.height) == (got.color, got.height)
+            assert set(ref.fused) == set(got.fused)
+            assert set(ref.bulged) == set(got.bulged)
+
+        refDiagonalPairs = {
+            (pos, neighbor)
+            for pos in refPlans
+            for neighbor, connected in planner.diagonalConnections(*pos)
+            if connected
+        }
+        assert refDiagonalPairs == set(diagonalPairs(map_, layers))
+
+        refFusedPairs = {
+            (pos, face.neighbor(*pos))
+            for pos, plan in refPlans.items()
+            for face in (Face.EAST, Face.SOUTH)
+            if face in plan.fused
+        }
+        assert refFusedPairs == set(fusedPairs(map_, layers))

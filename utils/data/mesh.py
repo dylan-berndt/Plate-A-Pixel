@@ -1,31 +1,16 @@
 import numpy as np
 from .canvas import *
-from .pixelPlan import Face, PixelPlanner
+from .pixelPlan import planGrid, fusedPairs, diagonalPairs
 from .pixelComponents import componentTriangles, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
 
 BASE_HEIGHT = 1
 
 
-class _GridView:
-    """The bare minimum PixelPlanner needs (.map, .layers, .positionValid)
-    to run over a plain array instead of an actual Canvas - lets the base
-    plate reuse PixelPlanner completely unchanged (see Mesh._calculateMesh)
-    instead of needing its own classification path."""
-
-    def __init__(self, map_, layers):
-        self.map = map_
-        self.layers = layers
-
-    def positionValid(self, position):
-        y, x = position
-        rows, cols = self.map.shape
-        return 0 <= y < rows and 0 <= x < cols
-
-
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
-    Reading this top-to-bottom: PixelPlanner classifies the grid
-    (pixelPlan.py) into fused/bulged/plainWalls per side, componentTriangles
+    Reading this top-to-bottom: planGrid (pixelPlan.py - the vectorized
+    counterpart to PixelPlanner.plan, used here for the whole grid at once)
+    classifies every cell into fused/bulged/plainWalls per side, componentTriangles
     turns one connected group's plans directly into a hull (pixelComponents.py),
     and everything below just wires those together - grouping pixels into
     physically connected pieces per color and collecting warnings along
@@ -118,7 +103,7 @@ class Mesh:
         # Every cell still empty at this point - a hole inside the canvas,
         # or anywhere in the margin border - becomes base material:
         # literally another color, at height 1, run through the exact same
-        # PixelPlanner pipeline as everything else. A real pixel taller
+        # classification as everything else. A real pixel taller
         # than it gets a completely ordinary bulged wall against it, and
         # the base cells fuse with each other exactly like any same-color
         # same-height neighbors always do.
@@ -126,10 +111,9 @@ class Mesh:
         gridMap[emptyMask] = baseColor
         gridLayers[emptyMask] = BASE_HEIGHT
 
-        planner = PixelPlanner(_GridView(gridMap, gridLayers))
+        plans = planGrid(gridMap, gridLayers)
 
-        plans = {}
-        parent = {}
+        parent = {pos: pos for pos in plans}
 
         def find(p):
             while parent[p] != p:
@@ -142,21 +126,10 @@ class Mesh:
             if ra != rb:
                 parent[ra] = rb
 
-        for y in range(rows):
-            for x in range(cols):
-                plan = planner.plan(y, x)
-                if plan is None:
-                    continue
-                plans[(y, x)] = plan
-                parent[(y, x)] = (y, x)
-
-        for (y, x), plan in plans.items():
-            for face in Face:
-                if face in plan.fused:
-                    union((y, x), face.neighbor(y, x))
-            for neighbor, connected in planner.diagonalConnections(y, x):
-                if connected:
-                    union((y, x), neighbor)
+        for a, b in fusedPairs(gridMap, gridLayers):
+            union(a, b)
+        for a, b in diagonalPairs(gridMap, gridLayers):
+            union(a, b)
 
         groups = {}
         for pos, plan in plans.items():
