@@ -97,11 +97,24 @@ class ToolRail(QWidget):
     def bindProject(self, projectController):
         if self._boundProjectController is not None:
             self._boundProjectController.selectionChanged.disconnect(self._refreshLayerStepper)
-            self._boundProjectController.meshReady.disconnect(self._refreshLayerStepper)
+            self._boundProjectController.meshInvalidated.disconnect(self._refreshLayerStepper)
         self._boundProjectController = projectController
         if projectController is not None:
             projectController.selectionChanged.connect(self._refreshLayerStepper)
-            projectController.meshReady.connect(self._refreshLayerStepper)
+            # meshInvalidated, not meshReady: the "+"/"-" buttons go
+            # through editing(affectsMesh=True), which mutates
+            # canvas.layers synchronously and only *then* calls
+            # rebuildMesh() - meshInvalidated fires immediately off the
+            # back of that same call, while meshReady only fires once the
+            # debounced background worker finishes recomputing actual mesh
+            # geometry (up to MESH_DEBOUNCE_MS plus however long that
+            # computation takes - a real, visible delay on a bigger
+            # canvas). The number this stepper shows only ever reads
+            # canvas.layers directly (see selectionHeightText), which is
+            # already correct the instant the button click returns, so
+            # waiting for the mesh pipeline to catch up was just an
+            # unnecessary lag on top of already-current data.
+            projectController.meshInvalidated.connect(self._refreshLayerStepper)
         self._refreshLayerStepper()
 
     def _refreshLayerStepper(self):
