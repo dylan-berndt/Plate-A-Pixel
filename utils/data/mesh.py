@@ -1,7 +1,7 @@
 import numpy as np
 from .canvas import *
 from .pixelPlan import Face, PixelPlanner
-from .pixelComponents import Pixel, componentTriangles, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
+from .pixelComponents import componentTriangles, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
 
 BASE_HEIGHT = 1
 
@@ -9,8 +9,8 @@ BASE_HEIGHT = 1
 class _GridView:
     """The bare minimum PixelPlanner needs (.map, .layers, .positionValid)
     to run over a plain array instead of an actual Canvas - lets the base
-    plate reuse PixelPlanner/Pixel completely unchanged (see
-    Mesh._calculateMesh) instead of needing its own classification path."""
+    plate reuse PixelPlanner completely unchanged (see Mesh._calculateMesh)
+    instead of needing its own classification path."""
 
     def __init__(self, map_, layers):
         self.map = map_
@@ -24,12 +24,12 @@ class _GridView:
 
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
-    Reading this top-to-bottom: PixelPlanner classifies the grid (pixelPlan.py),
-    Pixel turns a plan into plain Cap/Tube boxes (pixelComponents.py), and
-    everything below just wires those together - grouping pixels into
-    physically connected pieces per color, merging each group's boxes
-    into one solid with a real boolean union, and collecting warnings
-    along the way."""
+    Reading this top-to-bottom: PixelPlanner classifies the grid
+    (pixelPlan.py) into fused/bulged/plainWalls per side, componentTriangles
+    turns one connected group's plans directly into a hull (pixelComponents.py),
+    and everything below just wires those together - grouping pixels into
+    physically connected pieces per color and collecting warnings along
+    the way."""
 
     def __init__(self):
         self.canvas: Canvas = None
@@ -39,12 +39,12 @@ class Mesh:
         # row/column extent on every side - 0 still fills every hole
         # inside the canvas, just without a border past its edge.
         self.baseMargin = 0
-        # Structural geometry parameters passed straight through to every
-        # Pixel (see pixelComponents.py) - world-unit fractions of one grid
-        # cell, not millimeters (cellWidth/cellHeight only scale on export,
-        # see objExport.py). Defaults match pixelComponents.py's own
-        # constants, so leaving these alone reproduces the old fixed
-        # behavior exactly.
+        # Structural geometry parameters passed straight through to
+        # componentTriangles (see pixelComponents.py) - world-unit
+        # fractions of one grid cell, not millimeters (cellWidth/cellHeight
+        # only scale on export, see objExport.py). Defaults match
+        # pixelComponents.py's own constants, so leaving these alone
+        # reproduces the old fixed behavior exactly.
         self.tubeMargin = TUBE_MARGIN
         self.wallThickness = WALL_THICKNESS
         self.bulgeSize = BULGE_SIZE
@@ -118,17 +118,17 @@ class Mesh:
         # Every cell still empty at this point - a hole inside the canvas,
         # or anywhere in the margin border - becomes base material:
         # literally another color, at height 1, run through the exact same
-        # PixelPlanner/Pixel pipeline as everything else. A real pixel
-        # taller than it gets a completely ordinary bulged wall against it,
-        # and the base cells fuse with each other exactly like any
-        # same-color same-height neighbors always do.
+        # PixelPlanner pipeline as everything else. A real pixel taller
+        # than it gets a completely ordinary bulged wall against it, and
+        # the base cells fuse with each other exactly like any same-color
+        # same-height neighbors always do.
         emptyMask = gridLayers < 1
         gridMap[emptyMask] = baseColor
         gridLayers[emptyMask] = BASE_HEIGHT
 
         planner = PixelPlanner(_GridView(gridMap, gridLayers))
 
-        pixels = {}
+        plans = {}
         parent = {}
 
         def find(p):
@@ -147,39 +147,38 @@ class Mesh:
                 plan = planner.plan(y, x)
                 if plan is None:
                     continue
-                pixels[(y, x)] = Pixel(
-                    plan, self.hollow,
-                    tubeMargin=self.tubeMargin, wallThickness=self.wallThickness, bulgeSize=self.bulgeSize,
-                )
+                plans[(y, x)] = plan
                 parent[(y, x)] = (y, x)
 
-        for (y, x), pixel in pixels.items():
+        for (y, x), plan in plans.items():
             for face in Face:
-                if face in pixel.plan.fused:
+                if face in plan.fused:
                     union((y, x), face.neighbor(y, x))
             for neighbor, connected in planner.diagonalConnections(y, x):
                 if connected:
                     union((y, x), neighbor)
 
         groups = {}
-        for pos, pixel in pixels.items():
-            key = (pixel.plan.color, find(pos))
-            groups.setdefault(key, []).append(pixel)
-            self.warnings.extend(pixel.warnings())
+        for pos, plan in plans.items():
+            key = (plan.color, find(pos))
+            groups.setdefault(key, []).append(plan)
 
         colorCount = len(self.canvas.palette) + 1  # +1 for the base color
         meshes = [[] for _ in range(colorCount)]
         perColorRoots = {}
-        for (color, root), groupPixels in groups.items():
-            meshes[color].append(componentTriangles(groupPixels))
+        for (color, root), groupPlans in groups.items():
+            meshes[color].append(componentTriangles(
+                groupPlans, self.hollow,
+                tubeMargin=self.tubeMargin, wallThickness=self.wallThickness, bulgeSize=self.bulgeSize,
+            ))
             perColorRoots.setdefault(color, []).append(root)
 
         for color, roots in perColorRoots.items():
             if len(roots) > 1:
                 self.warnings.append(f"Color {color} produced {len(roots)} disconnected parts.")
 
-        for (color, root), groupPixels in groups.items():
-            if len(groupPixels) == 1:
+        for (color, root), groupPlans in groups.items():
+            if len(groupPlans) == 1:
                 self.warnings.append(f"Isolated single-pixel part for color {color}.")
 
         self.meshes = meshes
