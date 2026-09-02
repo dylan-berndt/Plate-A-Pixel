@@ -731,3 +731,90 @@ def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL
         return _fromTrimesh(tubeMesh)
     merged = trimesh.boolean.union([capMesh, tubeMesh])
     return _fromTrimesh(merged)
+
+
+# ---------------------------------------------------------------------------
+# Alternate implementation, kept side by side with the one above for
+# benchmarking: merge-rectangles-then-union instead of boundary-trace-then-
+# ear-clip. A pixel fused on all four sides is fully interior - not exposed
+# to anything this group needs a wall against - so those merge into big
+# core rectangles at native (unoffset) resolution; any other pixel gets its
+# own single box, offset per side via the exact same _capOffset/_tubeOffset
+# used above. Any overlap between boxes (the classic pinch-point case) is
+# resolved by one CSG union, not by tracing or classifying anything - which
+# is also why pinch points, holes, and reflex corners all just fall out
+# correctly with no special-casing, and why this path can't reproduce the
+# ear-clip stuck-state bug above: there's no ear-clipping here at all.
+# Solid only for now - no hollow/cavity support yet.
+# ---------------------------------------------------------------------------
+
+def _decomposeIntoRectangles(covered):
+    """Greedy partition of a boolean grid into non-overlapping rectangles
+    that exactly tile the True cells - no gaps, no overlaps, so unioning
+    their boxes needs no seam-matching between them."""
+    rows, cols = covered.shape
+    remaining = covered.copy()
+    rects = []
+    for r in range(rows):
+        c = 0
+        while c < cols:
+            if not remaining[r, c]:
+                c += 1
+                continue
+            c1 = c + 1
+            while c1 < cols and remaining[r, c1]:
+                c1 += 1
+            r1 = r + 1
+            while r1 < rows and remaining[r1, c:c1].all():
+                r1 += 1
+            rects.append((r, c, r1, c1))
+            remaining[r:r1, c:c1] = False
+            c = c1
+    return rects
+
+
+def _gridSolid(planByPos, offsetFn, margin, yBottom, yTop):
+    """One cap or tube solid, built by merging fully-interior pixels into
+    core rectangles and giving every other pixel its own offset box."""
+    ys = [p.y for p in planByPos.values()]
+    xs = [p.x for p in planByPos.values()]
+    minY, minX = min(ys), min(xs)
+    rows, cols = max(ys) - minY + 1, max(xs) - minX + 1
+
+    interior = np.zeros((rows, cols), dtype=bool)
+    boxes = []
+    for (y, x), plan in planByPos.items():
+        if len(plan.fused) == 4:
+            interior[y - minY, x - minX] = True
+            continue
+        x0 = offsetFn('W', 0, 0, planByPos, y, x, margin)
+        x1 = offsetFn('E', 0, 0, planByPos, y, x, margin)
+        z0 = offsetFn('N', 0, 0, planByPos, y, x, margin)
+        z1 = offsetFn('S', 0, 0, planByPos, y, x, margin)
+        boxes.append(_box(x0, x1, yBottom, yTop, z0, z1))
+
+    for (r0, c0, r1, c1) in _decomposeIntoRectangles(interior):
+        boxes.append(_box(c0 + minX, c1 + minX, yBottom, yTop, r0 + minY, r1 + minY))
+
+    if not boxes:
+        return None
+    return trimesh.boolean.union(boxes) if len(boxes) > 1 else boxes[0]
+
+
+def componentTrianglesGrid(plans, tubeMargin=TUBE_MARGIN, bulgeSize=BULGE_SIZE):
+    """Alternate componentTriangles (see the section banner above) - solid
+    only, no hollow support yet."""
+    height = next(iter(plans)).height
+    planByPos = {(p.y, p.x): p for p in plans}
+
+    capMesh = _gridSolid(planByPos, _capOffset, bulgeSize, height - 1.0, float(height))
+    if height <= 1:
+        return _fromTrimesh(capMesh) if capMesh is not None else []
+
+    tubeMesh = _gridSolid(planByPos, _tubeOffset, tubeMargin, 0.0, height - 1.0)
+    if tubeMesh is None:
+        return _fromTrimesh(capMesh) if capMesh is not None else []
+    if capMesh is None:
+        return _fromTrimesh(tubeMesh)
+    merged = trimesh.boolean.union([capMesh, tubeMesh])
+    return _fromTrimesh(merged)
