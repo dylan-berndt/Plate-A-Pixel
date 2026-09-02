@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from ..data.project import Project
 from ..data.mesh import Mesh
@@ -88,10 +88,19 @@ class ProjectController(QObject):
     Mesh recomputation runs on a background QThread (~0.6s for a full
     image is long enough to visibly stall the UI otherwise): calling
     rebuildMesh() fires meshInvalidated immediately, then meshReady(mesh)
-    once the worker finishes. If another edit arrives while a computation
-    is already running, only the latest request is kept and started when
-    the current one finishes - a burst of edits collapses into a single
-    follow-up recompute rather than queuing one per edit.
+    once the worker finishes. Starting the actual computation is debounced
+    (MESH_DEBOUNCE_MS) rather than immediate: a background QThread keeps
+    the *app* responsive, but CPython's GIL still means the computation and
+    the UI's own Python-level rendering callbacks (paintGL/paintEvent) take
+    turns on one core, and a chain of rebuilds - e.g. mashing a layer's "+"
+    button - visibly stutters if each one starts the instant the edit
+    happens. Repeated edits within the debounce window just keep replacing
+    the pending request and pushing the start back, so a whole burst
+    collapses into one recompute of wherever the user ends up, not one per
+    click; a computation already running when the window elapses is left
+    to finish on its own and picks up the latest pending request the
+    instant it does (see _onMeshComputed) rather than waiting out a second
+    debounce window on top.
 
     This class owns no editing methods of its own - it's the shared
     infrastructure (undo stack, editing(), the mesh worker, save/dirty
@@ -111,6 +120,12 @@ class ProjectController(QObject):
     meshInvalidated = Signal()
     meshReady = Signal(object)  # Mesh
 
+    # How long rebuildMesh() waits for edits to stop arriving before it
+    # actually starts a worker - see the class docstring. Tests that want
+    # rebuildMesh()'s old fire-immediately behavior set this to 0 (see the
+    # `controller` fixture in conftest.py).
+    MESH_DEBOUNCE_MS = 250
+
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.project = project
@@ -121,6 +136,10 @@ class ProjectController(QObject):
         self._dirty = False
         self._meshWorker = None
         self._pendingMeshRequest = None
+        self._meshDebounceTimer = QTimer(self)
+        self._meshDebounceTimer.setSingleShot(True)
+        self._meshDebounceTimer.setInterval(self.MESH_DEBOUNCE_MS)
+        self._meshDebounceTimer.timeout.connect(self._onMeshDebounceElapsed)
 
     # -- undo/redo ------------------------------------------------------
 
@@ -222,15 +241,26 @@ class ProjectController(QObject):
         self._dirty = False
 
     def rebuildMesh(self):
-        """Recompute the mesh on a background thread from the project's
-        current state - called by canvasController after any edit that
-        can change mesh geometry (height, hollow, baseMargin, tubeMargin,
-        wallThickness, bulgeSize)."""
+        """Recompute the mesh from the project's current state - called by
+        canvasController after any edit that can change mesh geometry
+        (height, hollow, baseMargin, tubeMargin, wallThickness, bulgeSize).
+        Invalidates immediately but debounces the actual worker start - see
+        the class docstring."""
         self.meshInvalidated.emit()
-        request = (_CanvasSnapshot(self.project.canvas), replace(self.project.viewSettings))
-        if self._meshWorker is not None:
-            self._pendingMeshRequest = request
+        self._pendingMeshRequest = (_CanvasSnapshot(self.project.canvas), replace(self.project.viewSettings))
+        self._meshDebounceTimer.start()
+
+    def _onMeshDebounceElapsed(self):
+        if self._pendingMeshRequest is None:
             return
+        if self._meshWorker is not None:
+            # A worker from before this debounce window is still running -
+            # _onMeshComputed checks isActive() on this same timer, sees it
+            # no longer running, and starts the pending request itself the
+            # moment that worker finishes, rather than this timer having to
+            # fire a second time.
+            return
+        request, self._pendingMeshRequest = self._pendingMeshRequest, None
         self._startMeshWorker(request)
 
     def _startMeshWorker(self, request):
@@ -255,7 +285,12 @@ class ProjectController(QObject):
         worker.wait()
         worker.deleteLater()
         self.meshReady.emit(mesh)
-        if self._pendingMeshRequest is not None:
+        # Only start the pending request immediately if the debounce window
+        # has already elapsed (it fired while this worker was still busy,
+        # found _meshWorker set, and left the request for us here) - if the
+        # timer is still counting down, edits are still coming in, and
+        # _onMeshDebounceElapsed will start it once they actually stop.
+        if self._pendingMeshRequest is not None and not self._meshDebounceTimer.isActive():
             request, self._pendingMeshRequest = self._pendingMeshRequest, None
             self._startMeshWorker(request)
 
