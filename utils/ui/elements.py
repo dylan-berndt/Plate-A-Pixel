@@ -340,9 +340,18 @@ class PaletteRow(QWidget):
     separate rename affordance), and the RGB readout. `color` is an
     (r, g, b) triple."""
 
+    # Locked, not left to sizeHint(): every row's natural height already
+    # comes out the same (same swatch size, same two-line text stack), but
+    # nothing enforced that - a future change to any child (e.g. name text
+    # wrapping) could make one row taller than its neighbors. An explicit
+    # fixed height also gives PaletteRail's scroll area a stable per-row
+    # size to lay rows out against.
+    ROW_HEIGHT = 30
+
     def __init__(self, color, name: str = "", onRename=None, onEditColor=None, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         theme = theme or Theme()
+        self.setFixedHeight(self.ROW_HEIGHT)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)

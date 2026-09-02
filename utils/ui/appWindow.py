@@ -139,7 +139,12 @@ class AppWindow(QMainWindow):
         rightLayout.setSpacing(0)
         self._paletteRail = PaletteRail(theme=self.theme)
         self._meshSettingsPanel = MeshSettingsPanel(theme=self.theme)
-        rightLayout.addWidget(self._paletteRail)
+        # PaletteRail alone gets the stretch: it has its own internal
+        # scroll area for the row list (see PaletteRail.__init__), so it's
+        # the one that should absorb/yield extra vertical space, while
+        # MeshSettingsPanel always stays fully visible at its natural size
+        # instead of being pushed off the bottom as colors are added.
+        rightLayout.addWidget(self._paletteRail, 1)
         rightLayout.addWidget(self._meshSettingsPanel)
         splitter.addWidget(rightContainer)
 
