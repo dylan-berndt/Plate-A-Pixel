@@ -112,7 +112,10 @@ class Canvas:
         if mode == "replace":
             self.selection = selection
         elif mode == "subtract":
-            self.selection = np.logical_xor(self.selection, selection)
+            # AND-NOT, not XOR: XOR toggles, so a cell in `selection` that
+            # wasn't already selected would flip on instead of staying
+            # unselected - subtraction should only ever turn cells off.
+            self.selection = np.logical_and(self.selection, np.logical_not(selection))
         elif mode == "add":
             self.selection = np.logical_or(self.selection, selection)
         elif mode == "intersect":

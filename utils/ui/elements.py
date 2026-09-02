@@ -497,7 +497,9 @@ class TabBar(QWidget):
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                # deleteLater(), not setParent(None) - see the identical
+                # note in PaletteRail._rebuild.
+                widget.deleteLater()
 
         self._tabs = []
         for index, (label, active, dirty) in enumerate(entries):

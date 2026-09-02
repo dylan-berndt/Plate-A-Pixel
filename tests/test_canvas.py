@@ -107,8 +107,18 @@ def test_contiguous_subtract_clears_the_whole_connected_region(canvas):
 
     for pos in RED_BLOCK:
         assert not canvas.selection[pos]
-    assert canvas.selection[RED_ISLAND]
-    assert canvas.selection.sum() == 1
+
+
+def test_subtract_over_an_unselected_region_leaves_it_unselected(canvas):
+    # alterSelection's "subtract" branch used XOR, which toggles: a cell
+    # in the subtracted region that wasn't already selected would flip
+    # ON instead of staying off. Subtraction must only ever turn cells
+    # off, never on.
+    canvas.bucketSelect(GREEN_DIAGONAL_PAIR[0], mode="subtract", contiguous=False, diagonal=True)
+
+    for pos in GREEN_DIAGONAL_PAIR:
+        assert not canvas.selection[pos]
+    assert canvas.selection.sum() == 0
 
 
 def test_invalid_mode_raises():

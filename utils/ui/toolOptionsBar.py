@@ -50,7 +50,9 @@ class ToolOptionsBar(QWidget):
             item = self._optionsLayout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                # deleteLater(), not setParent(None) - see the identical
+                # note in PaletteRail._rebuild.
+                widget.deleteLater()
 
         if tool is None:
             self._nameLabel.setText("")

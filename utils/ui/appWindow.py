@@ -82,8 +82,12 @@ class AppWindow(QMainWindow):
         # rail narrower than its own icons plus the margin above.
         self._toolRail.setMinimumWidth(40)
         self._toolRail.setAttribute(Qt.WA_StyledBackground, True)
+        # Only border-right, not a full border: this pane sits flush
+        # against the window's own left/top/bottom edges, where an outline
+        # would just double up against the window frame - only the edge
+        # facing the canvas in the middle needs one.
         self._toolRail.setStyleSheet(
-            f"QWidget#toolRail {{ background: {self.theme.clay300}; border: 2px solid {OUTLINE_COLOR}; }}"
+            f"QWidget#toolRail {{ background: {self.theme.clay300}; border-right: 2px solid {OUTLINE_COLOR}; }}"
         )
         body.addWidget(self._toolRail)
 
@@ -126,8 +130,9 @@ class AppWindow(QMainWindow):
         # QFrame subclass), not just around the pane itself.
         rightContainer.setObjectName("rightContainer")
         rightContainer.setAttribute(Qt.WA_StyledBackground, True)
+        # Only border-left - see the identical note on toolRail above.
         rightContainer.setStyleSheet(
-            f"QWidget#rightContainer {{ background: {self.theme.clay300}; border: 2px solid {OUTLINE_COLOR}; }}"
+            f"QWidget#rightContainer {{ background: {self.theme.clay300}; border-left: 2px solid {OUTLINE_COLOR}; }}"
         )
         rightLayout = QVBoxLayout(rightContainer)
         rightLayout.setContentsMargins(0, 0, 0, 0)

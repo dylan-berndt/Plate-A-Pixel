@@ -86,7 +86,15 @@ class PaletteRail(QWidget):
             item = self._rowsLayout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                # deleteLater(), not setParent(None): takeAt() already
+                # detaches the widget from the layout, so setParent(None)
+                # here would just turn it into an orphaned, independent
+                # top-level window (never shown, but never freed either -
+                # every recolor/rename leaked one more) instead of
+                # actually destroying it. deleteLater() destroys it on the
+                # next event-loop tick while it's still parented, so it
+                # never becomes a window at all.
+                widget.deleteLater()
 
         if self._boundProjectController is None:
             return

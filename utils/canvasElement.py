@@ -1,7 +1,7 @@
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtGui import QPainter, QImage, QColor, QPen
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, Signal
 
 from .ui import *
 from .data import *
@@ -36,6 +36,25 @@ class CanvasArtist(QWidget):
 
         self.setMouseTracking(True)
         self.setAutoFillBackground(False)
+
+        # Marching-ants animation: advances the dash offset on a timer and
+        # only repaints while there's actually a selection to animate, so
+        # an idle canvas isn't repainting itself in the background forever.
+        self._marchOffset = 0.0
+        self._marchTimer = QTimer(self)
+        self._marchTimer.setInterval(80)
+        self._marchTimer.timeout.connect(self._advanceMarch)
+        self._marchTimer.start()
+
+    def _advanceMarch(self):
+        if self._projectController is None:
+            return
+        if not self._projectController.project.canvas.selection.any():
+            return
+        # 8 == the DashLine pattern's period in pen-width units (4 on, 4
+        # off) - wrapping here keeps the float from growing unbounded.
+        self._marchOffset = (self._marchOffset + 1.0) % 8.0
+        self.update()
 
     def bindProject(self, projectController):
         # Redraw on anything that can change what's on screen: a
@@ -229,13 +248,28 @@ class CanvasArtist(QWidget):
         pen = QPen(QColor(self._theme.glaze))
         pen.setWidthF(2.0)
         pen.setStyle(Qt.DashLine)
+        pen.setDashOffset(self._marchOffset)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        minRow, maxRow, minCol, maxCol = ys.min(), ys.max(), xs.min(), xs.max()
-        painter.drawRect(QRectF(
-            origin.x() + minCol * cell, origin.y() + minRow * cell,
-            (maxCol - minCol + 1) * cell, (maxRow - minRow + 1) * cell,
-        ))
+        # Trace the selection's actual silhouette, not its bounding box:
+        # each selected cell contributes only the sides that border an
+        # unselected cell (or the canvas edge), so the ants hug the real
+        # shape - a plain filled block's interior edges are skipped, but
+        # an L-shape or a diagonal pair still outlines correctly.
+        rows, cols = selection.shape
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            left = origin.x() + x * cell
+            top = origin.y() + y * cell
+            right = left + cell
+            bottom = top + cell
+            if y == 0 or not selection[y - 1, x]:
+                painter.drawLine(QPointF(left, top), QPointF(right, top))
+            if y == rows - 1 or not selection[y + 1, x]:
+                painter.drawLine(QPointF(left, bottom), QPointF(right, bottom))
+            if x == 0 or not selection[y, x - 1]:
+                painter.drawLine(QPointF(left, top), QPointF(left, bottom))
+            if x == cols - 1 or not selection[y, x + 1]:
+                painter.drawLine(QPointF(right, top), QPointF(right, bottom))
 
 
 class CanvasArea(QWidget):
