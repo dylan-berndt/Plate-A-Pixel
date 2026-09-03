@@ -472,6 +472,15 @@ class ViewModeTabs(QWidget):
         # layout, so it never gets auto-sized to its content otherwise.
         self.adjustSize()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-adjust on first real show, not just at construction: some
+        # styles/platforms don't finish resolving an instance stylesheet's
+        # font metrics until the widget is actually polished for display,
+        # which can leave the construction-time adjustSize() sized off an
+        # only-provisional sizeHint.
+        self.adjustSize()
+
     def _applyStyles(self):
         theme = self._theme
         for mode, button in self._buttons.items():
@@ -483,6 +492,7 @@ class ViewModeTabs(QWidget):
                 QPushButton {{
                     background: {bg}; color: {fg};
                     border: 1.5px solid {theme.ink};
+                    border-top: none;
                     border-top-left-radius: 0px; border-top-right-radius: 0px;
                     border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
                     font-size: 10.5px; font-weight: 700;
