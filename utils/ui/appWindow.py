@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter, QStackedLayout, QFrame,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter, QStackedLayout,
 )
 from PySide6.QtCore import Qt
 
@@ -29,13 +29,18 @@ class AppWindow(QMainWindow):
     so this class doesn't import Qt-OpenGL machinery it doesn't
     otherwise need.
 
-    The work area is a QStackedLayout of two pages - "2D" (the color
-    canvas and layer canvas side by side) and "3D" (the mesh view) -
-    switched by a ViewModeTabs floating in its top-left corner, not laid
-    out beside it: it's parented directly onto the stack's container and
-    raised above it, at a fixed top-left offset that never needs
-    repositioning on resize (unlike CanvasArea's own top-right fit
-    button, whose position depends on the pane's width).
+    The work area is a "Canvas"/"Layer"/"Mesh" ViewModeTabs row followed
+    by a QStackedLayout of the three matching pages (color canvas, layer
+    canvas, mesh view) - one view per page, only one visible at a time.
+    The tabs are laid out in normal document flow directly above the
+    stack, not floated on top of it: earlier this was a widget floating
+    over the stack with manually-positioned coordinates, which fought
+    Qt's compositing of the mesh page's QOpenGLWidget (the tabs could
+    end up painted *under* it - see QOpenGLWidget's own docs on
+    overlapping widgets) and needed a hand-tuned offset to line up with
+    the tool options bar above it. A real layout row sidesteps both:
+    nothing ever overlaps the GL surface, and alignment falls out of the
+    layout instead of a magic-number move().
 
     ProjectController has no dedicated "dirty changed" or "undo state
     changed" signal (see ARCHITECTURE.md - isDirty/canUndo/canRedo are
@@ -110,66 +115,51 @@ class AppWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)
 
         centerWidget = QWidget()
-        self._centerStack = QStackedLayout(centerWidget)
+        centerColumn = QVBoxLayout(centerWidget)
+        centerColumn.setContentsMargins(0, 0, 0, 0)
+        centerColumn.setSpacing(0)
+
+        # A real row in the layout, not a floating overlay - see the class
+        # docstring for why. Left-aligned with a small inset to match the
+        # squared top sitting just under the tool options bar.
+        self._viewModeTabs = ViewModeTabs(
+            modes=("Canvas", "Layer", "Mesh"), active="Canvas", onChange=self._setViewMode, theme=self.theme,
+        )
+        tabRow = QHBoxLayout()
+        tabRow.setContentsMargins(10, 0, 0, 0)
+        tabRow.setSpacing(0)
+        tabRow.addWidget(self._viewModeTabs, 0, Qt.AlignLeft)
+        tabRow.addStretch(1)
+        centerColumn.addLayout(tabRow)
+
+        stackContainer = QWidget()
+        self._centerStack = QStackedLayout(stackContainer)
         self._centerStack.setContentsMargins(0, 0, 0, 0)
+        centerColumn.addWidget(stackContainer, 1)
 
-        # -- page 0, "2D": color canvas | layer canvas -------------------
-        canvasPage = QWidget()
-        canvasPageLayout = QHBoxLayout(canvasPage)
-        canvasPageLayout.setContentsMargins(0, 0, 0, 0)
-        canvasPageLayout.setSpacing(0)
-
-        # Filled in by setCanvasArea/setLayerCanvasArea once those views
-        # exist.
+        # -- page 0, "Canvas" ----------------------------------------------
+        # Filled in by setCanvasArea once that view exists.
         self._canvasSlot = QWidget()
         self._canvasSlotLayout = QVBoxLayout(self._canvasSlot)
         self._canvasSlotLayout.setContentsMargins(0, 0, 0, 0)
-        canvasPageLayout.addWidget(self._canvasSlot, 1)
         self.canvasArea = None
+        self._centerStack.addWidget(self._canvasSlot)
 
-        divider = QFrame()
-        divider.setFixedWidth(2)
-        divider.setStyleSheet(f"background: {OUTLINE_COLOR};")
-        canvasPageLayout.addWidget(divider)
-
+        # -- page 1, "Layer" -------------------------------------------------
+        # Filled in by setLayerCanvasArea once that view exists.
         self._layerCanvasSlot = QWidget()
         self._layerCanvasSlotLayout = QVBoxLayout(self._layerCanvasSlot)
         self._layerCanvasSlotLayout.setContentsMargins(0, 0, 0, 0)
-        canvasPageLayout.addWidget(self._layerCanvasSlot, 1)
         self.layerCanvasArea = None
+        self._centerStack.addWidget(self._layerCanvasSlot)
 
-        self._centerStack.addWidget(canvasPage)
-
-        # -- page 1, "3D": mesh view --------------------------------------
-        meshPage = QWidget()
-        meshPageLayout = QVBoxLayout(meshPage)
-        meshPageLayout.setContentsMargins(0, 0, 0, 0)
-
+        # -- page 2, "Mesh" --------------------------------------------------
         # Filled in by setMeshElement once that view exists.
         self._meshSlot = QWidget()
         self._meshSlotLayout = QVBoxLayout(self._meshSlot)
         self._meshSlotLayout.setContentsMargins(0, 0, 0, 0)
-        meshPageLayout.addWidget(self._meshSlot)
         self.meshElement = None
-
-        self._centerStack.addWidget(meshPage)
-
-        self._viewModeTabs = ViewModeTabs(
-            modes=("2D", "3D"), active="2D", onChange=self._setViewMode, theme=self.theme, parent=centerWidget,
-        )
-        # Flush against centerWidget's own top edge, not floating below it -
-        # centerWidget starts exactly where the tool options bar ends, so
-        # this is what actually puts the tabs' squared top against the
-        # bottom of that bar instead of leaving a visible gap.
-        self._viewModeTabs.move(10, 0)
-        # raise_() alone only fixes the plain-QWidget page (2D); Qt composites
-        # a QOpenGLWidget (the mesh page's MeshElement) through a separate
-        # path that can still paint over a raised sibling unless that
-        # sibling opts in with WA_AlwaysStackOnTop - see QOpenGLWidget's own
-        # docs on overlapping widgets. Without this, the tabs vanished the
-        # moment the 3D page (meshPage) held a real GL surface.
-        self._viewModeTabs.setAttribute(Qt.WA_AlwaysStackOnTop, True)
-        self._viewModeTabs.raise_()
+        self._centerStack.addWidget(self._meshSlot)
 
         splitter.addWidget(centerWidget)
 
@@ -225,7 +215,7 @@ class AppWindow(QMainWindow):
 
         self._onActiveProjectChanged(None)
 
-    # -- slotting in the 2D/3D views once they exist ----------------------
+    # -- slotting in the Canvas/Layer/Mesh views once they exist ----------
 
     def setCanvasArea(self, widget):
         self._canvasSlotLayout.addWidget(widget)
@@ -253,9 +243,9 @@ class AppWindow(QMainWindow):
             widget.bindProject(self._appController.activeController)
 
     def _resetCanvasViews(self):
-        # One "Zoom to Fit" action resets both 2D panes together (see
-        # setCanvasArea) - they share one page and one project, so
-        # there's no reading in which only one should snap back.
+        # One "Zoom to Fit" action resets both the Canvas and Layer pages
+        # together (see setCanvasArea) rather than needing a second action
+        # for whichever of the two isn't currently on screen.
         for widget in (self.canvasArea, self.layerCanvasArea):
             if widget is not None and hasattr(widget, "resetView"):
                 widget.resetView()
@@ -266,8 +256,10 @@ class AppWindow(QMainWindow):
         if self._appController.activeController is not None and hasattr(widget, "bindProject"):
             widget.bindProject(self._appController.activeController)
 
+    _VIEW_MODE_INDEX = {"Canvas": 0, "Layer": 1, "Mesh": 2}
+
     def _setViewMode(self, mode):
-        self._centerStack.setCurrentIndex(0 if mode == "2D" else 1)
+        self._centerStack.setCurrentIndex(self._VIEW_MODE_INDEX[mode])
 
     def setExportHandler(self, handler):
         """`handler` is called with no arguments when File > Export is

@@ -425,9 +425,9 @@ class CanvasArea(QWidget):
 
     `artistClass` swaps in LayerCanvasArtist (above) for the layer view
     slotted into AppWindow.setLayerCanvasArea - everything else here
-    (mouse routing, pan/zoom, the fit button) is identical between the
-    color and layer panes, so this is the one seam rather than a second
-    near-duplicate widget class."""
+    (mouse routing, pan/zoom) is identical between the color and layer
+    panes, so this is the one seam rather than a second near-duplicate
+    widget class."""
 
     zoomChanged = Signal(float)
 
@@ -441,17 +441,10 @@ class CanvasArea(QWidget):
         self.artist = artistClass(theme=self._theme)
         layout.addWidget(self.artist)
 
-        self._fitButton = IconButton(Icons.EXPAND, onClick=self.resetView, size=26, theme=self._theme, parent=self)
-        self._fitButton.move(self.width() - 38, 12)
-
         self._toolGestureActive = False
         self._panning = False
         self._panOrigin = None
         self._positionOrigin = None
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._fitButton.move(self.width() - 38, 12)
 
     def bindProject(self, projectController):
         self.artist.bindProject(projectController)

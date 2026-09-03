@@ -279,10 +279,10 @@ concern, not domain state).
   else is built from (`Text`/`SectionLabel`/`MonoText`, `Button`/
   `IconButton`/`PillToggle`, `Slider`/`Stepper`/`Dropdown`/
   `SegmentedControl`, `PaletteRow`, `Tab`/`TabBar`, `ViewModeTabs` (the
-  floating 2D/3D switcher pinned to the work area's corner - squared
-  tops, rounded bottoms; not built on `Tab`/`TabBar` since it's a fixed
-  two-entry mode switch with a different shape, not a per-project tab),
-  plus `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
+  Canvas/Layer/Mesh work-area switcher - squared tops, rounded bottoms;
+  not built on `Tab`/`TabBar` since it's a fixed small set of mode
+  buttons with a different shape, not a per-project tab), plus
+  `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
   live widget generically, so a new tool option never needs hand-written
   UI). No project- or controller-specific logic lives here.
 - **`utils/ui/menuBar.py`, `toolRail.py`, `toolOptionsBar.py`,
@@ -303,16 +303,25 @@ concern, not domain state).
   `setExportHandler` wires in whatever opens `ExportDialog`. `main.py` is
   what actually calls all four.
 
-  The work area itself is a `QStackedLayout` of two pages - "2D" (the
-  color canvas and layer canvas side by side, divided by a plain
-  outline) and "3D" (the mesh view) - switched by a small `ViewModeTabs`
-  (`elements.py`) floating over its top-left corner rather than laid out
-  beside it, at a fixed offset that never needs repositioning on resize.
+  The work area itself is a `ViewModeTabs` (`elements.py`) row in normal
+  document flow, immediately above a `QStackedLayout` of three pages -
+  "Canvas" (the color canvas), "Layer" (the layer canvas), "Mesh" (the
+  mesh view) - one view visible at a time. The tabs are a real layout
+  row, not a widget floated on top of the stack: an earlier version
+  positioned them with manual coordinates over the stack, which both
+  fought Qt's compositing of the mesh page's `QOpenGLWidget` (an overlay
+  widget can end up painted *under* a `QOpenGLWidget` unless it opts into
+  `Qt.WA_AlwaysStackOnTop` - see that class's own docs - and even then it
+  proved unreliable here) and needed a hand-tuned offset to line up with
+  the tool options bar above it. Laying the tabs out in flow instead
+  means they can never overlap the GL surface at all, and alignment
+  falls out of the layout rather than a magic-number `move()`.
   `setLayerCanvasArea` also adds "Show Layer Numbers" to the View menu
   when the layer canvas's artist exposes `setShowLabels`
   (`LayerCanvasArtist`, see below); `setCanvasArea`'s own "Zoom to Fit"
-  action resets both 2D panes together (`_resetCanvasViews`) since they
-  share one page and one project.
+  action resets both the Canvas and Layer pages together
+  (`_resetCanvasViews`) rather than needing a second action for whichever
+  of the two isn't currently on screen.
 - **`canvasElement.py`** — the 2D views: `CanvasArtist` (paints
   `canvas.map` through `canvas.palette.colors`, the selection overlay and
   its marching-ants outline, and owns pan/zoom) and `CanvasArea` (routes
