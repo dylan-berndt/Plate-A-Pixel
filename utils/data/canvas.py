@@ -123,11 +123,17 @@ class Canvas:
         else:
             raise NotImplementedError("You Goober")
 
-    def bucketSelect(self, position, contiguous=True, diagonal=False, mode="replace"):
-        value = self.map[position]
+    def bucketSelect(self, position, contiguous=True, diagonal=False, mode="replace", source=None):
+        """`source` is the per-pixel array read for the "does this match"
+        test - `self.map` (color) by default, but the layer canvas passes
+        `self.layers` instead so a click there groups by assigned height
+        rather than color (see WandTool.onPress). Same shape as `self.map`
+        either way, so everything below is unchanged by which one it is."""
+        source = self.map if source is None else source
+        value = source[position]
 
         if not contiguous:
-            newSelection = self.map == value
+            newSelection = source == value
             self.alterSelection(newSelection, mode)
             return
 
@@ -139,7 +145,7 @@ class Canvas:
             check = self.validNeighbors(queue[0], diagonal)
 
             for pos in check:
-                if self.map[pos] == value and not newSelection[pos]:
+                if source[pos] == value and not newSelection[pos]:
                     newSelection[pos] = 1
                     queue.append(pos)
 

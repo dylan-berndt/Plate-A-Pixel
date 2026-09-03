@@ -49,6 +49,23 @@ def test_wand_tool_press_contiguous_stops_at_the_color_boundary(controller):
     assert not canvas.selection[RED_ISLAND]
 
 
+def test_wand_tool_press_with_use_layers_selects_by_height_not_color(controller):
+    # RED_BLOCK and RED_ISLAND share a color but, here, not a height;
+    # useLayers=True must group purely by canvas.layers.
+    tool = WandTool()
+    tool.selections["contiguous"] = False
+    canvas = controller.project.canvas
+    canvas.layers[:] = 1
+    canvas.layers[RED_ISLAND] = 9
+
+    tool.onPress(controller.canvasController, (0, 0), useLayers=True)
+
+    for pos in RED_BLOCK:
+        assert canvas.selection[pos]
+    assert not canvas.selection[RED_ISLAND]
+    assert canvas.selection[5, 0]  # different color, same height - included
+
+
 def test_wand_tool_press_respects_diagonal_option(controller):
     tool = WandTool()
     tool.selections["contiguous"] = True

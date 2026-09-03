@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
+from PySide6.QtCore import QTimer
 
 from .elements import SectionLabel, SegmentedControl, Stepper, Theme
 
@@ -12,7 +13,20 @@ class MeshSettingsPanel(QWidget):
     itself, unlike everything else here. Each Stepper owns a plain local
     value synced from ViewSettings on bindProject/viewSettingsChanged,
     since every CanvasController setter here takes an absolute value,
-    not a delta."""
+    not a delta.
+
+    Every numeric field's controller call is debounced (_debounce below):
+    the stepper's own text updates immediately off the local value for
+    responsive feedback, but the actual CanvasController.setXxx() call -
+    which pushes an undo snapshot and (for the mesh-geometry fields)
+    kicks off ProjectController's own mesh-rebuild pipeline - only fires
+    once DEBOUNCE_MS has passed with no further click on that same field.
+    That's a separate debounce from ProjectController.MESH_DEBOUNCE_MS
+    (which only delays when a queued rebuild actually *starts*
+    computing): without this one, mashing a stepper's +/- still pushed
+    one undo snapshot and queued one rebuild request per click, so undo
+    would need as many steps to unwind a quick burst as clicks it took to
+    make it."""
 
     MARGIN_STEP = 1
     CELL_STEP = 1.0
@@ -28,6 +42,8 @@ class MeshSettingsPanel(QWidget):
     # Qt's box-model computes internally rather than exposing simply.
     CARD_CONTENT_WIDTH = 194
 
+    DEBOUNCE_MS = 200
+
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         self._theme = theme or Theme()
@@ -38,6 +54,8 @@ class MeshSettingsPanel(QWidget):
         self._tubeMargin = 0.0
         self._wallThickness = 0.0
         self._bulgeSize = 0.0
+        self._debounceTimers = {}
+        self._debouncePending = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 0, 14, 16)
@@ -126,7 +144,39 @@ class MeshSettingsPanel(QWidget):
 
     # -- edits -----------------------------------------------------------
 
+    def _debounce(self, key, commit):
+        """Delays `commit` until DEBOUNCE_MS has passed with no further
+        call under this same `key` - see the class docstring. `commit`
+        replaces whatever was pending under `key` (so only the *latest*
+        requested value for that field ever actually fires) rather than
+        queuing, and a pending commit is flushed - not dropped - if the
+        bound project changes before its timer elapses (see bindProject/
+        _flushDebounce): it was a real edit the user made, just not
+        committed yet."""
+        self._debouncePending[key] = commit
+        timer = self._debounceTimers.get(key)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(self.DEBOUNCE_MS)
+            timer.timeout.connect(lambda k=key: self._fireDebounce(k))
+            self._debounceTimers[key] = timer
+        timer.start()
+
+    def _fireDebounce(self, key):
+        commit = self._debouncePending.pop(key, None)
+        if commit is not None:
+            commit()
+
+    def _flushDebounce(self):
+        for key, timer in self._debounceTimers.items():
+            if timer.isActive():
+                timer.stop()
+                self._fireDebounce(key)
+
     def _setHollow(self, hollow):
+        # Not debounced: a deliberate single click on a Solid/Hollow
+        # toggle, not something ever mashed like a stepper's +/-.
         if self._boundProjectController is not None:
             self._boundProjectController.canvasController.setHollow(hollow)
 
@@ -137,8 +187,11 @@ class MeshSettingsPanel(QWidget):
         self._setMargin(max(0, self._margin - self.MARGIN_STEP))
 
     def _setMargin(self, value):
+        self._margin = value
+        self._marginStepper.setText(f"{value}")
         if self._boundProjectController is not None:
-            self._boundProjectController.canvasController.setMargin(value)
+            controller = self._boundProjectController
+            self._debounce("margin", lambda: controller.canvasController.setMargin(value))
 
     def _incrementWidth(self):
         self._setCellWidth(self._cellWidth + self.CELL_STEP)
@@ -147,8 +200,11 @@ class MeshSettingsPanel(QWidget):
         self._setCellWidth(max(self.CELL_STEP, self._cellWidth - self.CELL_STEP))
 
     def _setCellWidth(self, value):
+        self._cellWidth = value
+        self._widthStepper.setText(f"{value:g} mm")
         if self._boundProjectController is not None:
-            self._boundProjectController.canvasController.setCellWidth(value)
+            controller = self._boundProjectController
+            self._debounce("cellWidth", lambda: controller.canvasController.setCellWidth(value))
 
     def _incrementHeight(self):
         self._setCellHeight(self._cellHeight + self.CELL_STEP)
@@ -157,20 +213,32 @@ class MeshSettingsPanel(QWidget):
         self._setCellHeight(max(self.CELL_STEP, self._cellHeight - self.CELL_STEP))
 
     def _setCellHeight(self, value):
+        self._cellHeight = value
+        self._heightStepper.setText(f"{value:g} mm")
         if self._boundProjectController is not None:
-            self._boundProjectController.canvasController.setCellHeight(value)
+            controller = self._boundProjectController
+            self._debounce("cellHeight", lambda: controller.canvasController.setCellHeight(value))
 
     def _setTubeMargin(self, value):
+        self._tubeMargin = value
+        self._tubeMarginStepper.setText(f"{value:.2f}")
         if self._boundProjectController is not None:
-            self._boundProjectController.canvasController.setTubeMargin(value)
+            controller = self._boundProjectController
+            self._debounce("tubeMargin", lambda: controller.canvasController.setTubeMargin(value))
 
     def _setWallThickness(self, value):
+        self._wallThickness = value
+        self._wallThicknessStepper.setText(f"{value:.2f}")
         if self._boundProjectController is not None:
-            self._boundProjectController.canvasController.setWallThickness(value)
+            controller = self._boundProjectController
+            self._debounce("wallThickness", lambda: controller.canvasController.setWallThickness(value))
 
     def _setBulgeSize(self, value):
+        self._bulgeSize = value
+        self._bulgeSizeStepper.setText(f"{value:.2f}")
         if self._boundProjectController is not None:
-            self._boundProjectController.canvasController.setBulgeSize(value)
+            controller = self._boundProjectController
+            self._debounce("bulgeSize", lambda: controller.canvasController.setBulgeSize(value))
 
     # -- binding to whichever project is currently active ----------------
 
@@ -180,6 +248,11 @@ class MeshSettingsPanel(QWidget):
         # instead, which never emits viewSettingsChanged - only meshInvalidated
         # now and meshReady once the background recompute finishes - so both
         # need to be watched for this panel to stay in sync.
+        # Flush, not drop: a pending edit was a real click the user made
+        # on the project we're about to leave - it should still land
+        # there rather than vanish because a tab switch beat the debounce
+        # window closing.
+        self._flushDebounce()
         if self._boundProjectController is not None:
             self._boundProjectController.viewSettingsChanged.disconnect(self._refresh)
             self._boundProjectController.meshReady.disconnect(self._refresh)

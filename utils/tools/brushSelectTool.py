@@ -3,7 +3,10 @@ from .tool import Options, FunctionalTool
 
 class BrushSelectTool(FunctionalTool):
     """Drag-to-select: stamps every cell within a radius of the pointer
-    into the selection on press, then keeps stamping as it drags."""
+    into the selection on press, then keeps stamping as it drags.
+    Ignores useLayers (see FunctionalTool.onPress) - Canvas.brushSelect
+    is a pure radius stamp with no color/height test at all, so it
+    already means the same thing on the color and layer canvases."""
 
     def __init__(self):
         super().__init__(
@@ -23,11 +26,11 @@ class BrushSelectTool(FunctionalTool):
         with controller.projectController.editing(signal=controller.projectController.selectionChanged):
             controller.project.canvas.brushSelect(pos, self.selections["size"], mode=mode)
 
-    def onPress(self, controller, pos):
+    def onPress(self, controller, pos, useLayers=False):
         self._dragMode = self.selections["mode"]
         self._stamp(controller, pos, self._dragMode)
 
-    def onDrag(self, controller, pos):
+    def onDrag(self, controller, pos, useLayers=False):
         # A drag continuing a "replace" stroke must not keep replacing -
         # each sample would wipe out every cell painted earlier in the
         # same stroke, leaving only the brush's current stamp selected.

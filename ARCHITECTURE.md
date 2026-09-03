@@ -112,11 +112,17 @@ tool" without revisiting this.
   `Options(label, type, choices)` describing what's configurable), and
   `selections` (the user's current values for those options). A `Tool`
   by itself doesn't know how to edit anything.
-- **`FunctionalTool(Tool)`** — adds `onPress(controller, pos)` (required),
-  `onDrag(controller, pos)`/`onRelease(controller, pos)` (no-ops by
-  default). Handlers take the `CanvasController` to act through as an
+- **`FunctionalTool(Tool)`** — adds `onPress(controller, pos, useLayers=False)`
+  (required), `onDrag(...)`/`onRelease(...)` (no-ops by default, same
+  signature). Handlers take the `CanvasController` to act through as an
   explicit argument rather than storing one — see ToolController below
-  for why. A handler calls `Canvas` methods directly (via
+  for why. `useLayers` says which canvas view the gesture started on
+  (color canvas vs. layer canvas - see `CanvasArea`/`LayerCanvasArtist`
+  in `canvasElement.py`); `ToolController` resolves it from which pane
+  sent the event and forwards it uniformly to whichever tool is active,
+  but only a tool whose selection logic is actually color/height-
+  dependent needs to look at it (`WandTool` does; `BrushSelectTool`
+  ignores it - see below). A handler calls `Canvas` methods directly (via
   `controller.project.canvas`) and wraps its own mutation in
   `with controller.projectController.editing():` - there is no
   `CanvasController.bucketSelect`/`brushSelect` standing in the middle;
@@ -127,14 +133,23 @@ tool" without revisiting this.
   is no separate "bucket tool": `bucketSelect(contiguous=False)` is
   already identical to picking every cell matching the clicked color, so
   "contiguous" is just one of Wand's three options (`mode`, `contiguous`,
-  `diagonal`), not a second tool.
+  `diagonal`), not a second tool. `bucketSelect` takes an optional
+  `source` array to run its equality test against, defaulting to
+  `canvas.map` (color); `WandTool.onPress` passes `canvas.layers` instead
+  when `useLayers` is set, so a click on the layer canvas groups pixels
+  by assigned height instead of by color - the domain method doesn't
+  know or care which, since both are just same-shaped arrays to compare
+  against.
 - **`BrushSelectTool`** — drag-to-select within a radius (`size` option)
   of the pointer, built on `Canvas.brushSelect`. `onPress` and `onDrag`
   share a private `_stamp()` helper (that's an implementation detail of
   this one tool, not a shared base-class mechanism); a drag that started
   in "Replacement" mode downgrades to "add" on every sample after the
   first, since re-applying "replace" on each dragged-over cell would
-  erase everything painted earlier in the same stroke.
+  erase everything painted earlier in the same stroke. Ignores
+  `useLayers` - `Canvas.brushSelect` is a pure radius stamp with no
+  color/height test at all, so it already means the same thing on either
+  canvas.
 - **`ToolRegistry`** — the list of available tools and which is active;
   what a tool rail/options bar bind to. `setActiveTool(name)` raises on
   an unknown name.
@@ -229,15 +244,17 @@ editor, rather than resetting per project.
 
 Owns the `ToolRegistry`; `setActiveTool(name)` switches it and emits
 `activeToolChanged(tool)` (for a tool rail to highlight the right button
-and an options bar to swap panels). `press(pos)`/`drag(pos)`/
-`release(pos)` are the actual entry point from a canvas view's mouse
-events: `press` resolves `AppController.activeController` once, brackets
-the whole press→drag→release sequence in that `ProjectController`'s
-`beginGesture()`/`endGesture()` (even a mid-drag tab switch can't
-misattribute later samples to a different project), and hands each
-handler that project's `canvasController` — not the `ProjectController`
-itself, since tools only ever need what `CanvasController` exposes plus
-direct `Canvas` access through it (see the tool layer above).
+and an options bar to swap panels). `press(pos, useLayers=False)`/
+`drag(...)`/`release(...)` are the actual entry point from a canvas
+view's mouse events: `press` resolves `AppController.activeController`
+once, brackets the whole press→drag→release sequence in that
+`ProjectController`'s `beginGesture()`/`endGesture()` (even a mid-drag
+tab switch can't misattribute later samples to a different project), and
+hands each handler that project's `canvasController` — not the
+`ProjectController` itself, since tools only ever need what
+`CanvasController` exposes plus direct `Canvas` access through it (see
+the tool layer above). `useLayers` (set by `CanvasArea` depending on
+which pane sent the event) just rides along unchanged to the tool.
 
 ### `CanvasController` — the one place a view calls to edit a project
 
@@ -279,9 +296,11 @@ concern, not domain state).
   else is built from (`Text`/`SectionLabel`/`MonoText`, `Button`/
   `IconButton`/`PillToggle`, `Slider`/`Stepper`/`Dropdown`/
   `SegmentedControl`, `PaletteRow`, `Tab`/`TabBar`, `ViewModeTabs` (the
-  Canvas/Layer/Mesh work-area switcher - squared tops, rounded bottoms;
-  not built on `Tab`/`TabBar` since it's a fixed small set of mode
-  buttons with a different shape, not a per-project tab), plus
+  Canvas/Layer/Mesh work-area switcher - squared tops, rounded bottoms,
+  each button sized to its own label rather than a shared fixed size, so
+  "Canvas"/"Mesh" aren't clipped to fit whatever "2D"/"3D" needed; not
+  built on `Tab`/`TabBar` since it's a fixed small set of mode buttons
+  with a different shape, not a per-project tab), plus
   `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
   live widget generically, so a new tool option never needs hand-written
   UI). No project- or controller-specific logic lives here.
@@ -294,6 +313,18 @@ concern, not domain state).
   (`MeshSettingsPanel`), and the bottom status strip (`StatusBar`). Each
   binds to a `ProjectController` (`bindProject`) and redraws off its
   signals; none of them touch `utils/data/` directly.
+  `MeshSettingsPanel`'s numeric fields (margin, cell width/height,
+  tube margin, wall thickness, bulge size) debounce their own
+  `CanvasController` calls (`_debounce`/`DEBOUNCE_MS`, separate from
+  `ProjectController.MESH_DEBOUNCE_MS` - that one only delays when a
+  queued rebuild actually starts computing, not how many undo snapshots
+  and rebuild requests get queued getting there): a stepper's +/- update
+  the local value and its own displayed text immediately, but the
+  controller call - which pushes an undo snapshot - only fires once
+  `DEBOUNCE_MS` has passed with no further click on that field, so
+  mashing a stepper doesn't cost one undo entry per click. A pending
+  edit is flushed (fired immediately), not dropped, if `bindProject`
+  switches to a different project before its timer elapses.
 - **`utils/ui/appWindow.py`** — `AppWindow`: assembles all of the above
   around an `AppController`, plus a tab strip driving
   `AppController.newProjectFromImage`/`setActiveProject`/`closeProject`.
@@ -303,23 +334,28 @@ concern, not domain state).
   `setExportHandler` wires in whatever opens `ExportDialog`. `main.py` is
   what actually calls all four.
 
-  The work area itself is a `ViewModeTabs` (`elements.py`) row in normal
-  document flow, immediately above a `QStackedLayout` of three pages -
-  "Canvas" (the color canvas), "Layer" (the layer canvas), "Mesh" (the
-  mesh view) - one view visible at a time. The tabs are a real layout
-  row, not a widget floated on top of the stack: an earlier version
-  positioned them with manual coordinates over the stack, which both
-  fought Qt's compositing of the mesh page's `QOpenGLWidget` (an overlay
-  widget can end up painted *under* a `QOpenGLWidget` unless it opts into
-  `Qt.WA_AlwaysStackOnTop` - see that class's own docs - and even then it
-  proved unreliable here) and needed a hand-tuned offset to line up with
-  the tool options bar above it. Laying the tabs out in flow instead
-  means they can never overlap the GL surface at all, and alignment
-  falls out of the layout rather than a magic-number `move()`.
-  `setLayerCanvasArea` also adds "Show Layer Numbers" to the View menu
-  when the layer canvas's artist exposes `setShowLabels`
-  (`LayerCanvasArtist`, see below); `setCanvasArea`'s own "Zoom to Fit"
-  action resets both the Canvas and Layer pages together
+  The work area itself is a `QStackedLayout` of three pages - "Canvas"
+  (the color canvas), "Layer" (the layer canvas), "Mesh" (the mesh view)
+  - with a `ViewModeTabs` (`elements.py`) floated over its top-left
+  corner (`move()` + `Qt.WA_AlwaysStackOnTop` + `raise_()`) so the tabs
+  and mesh view genuinely share screen area, rather than a separate
+  layout row above the stack. Overlapping a `QOpenGLWidget` (the mesh
+  page's `MeshElement`) with an ordinary widget only composites reliably
+  in Qt when the two are direct siblings under the *same* parent (see
+  `QOpenGLWidget`'s own docs on overlaps) - an earlier version put
+  `ViewModeTabs` and `MeshElement` two parents apart (each view lived in
+  its own wrapper `QWidget` the real widget was added into), which left
+  the tabs painted under the mesh view despite `WA_AlwaysStackOnTop`
+  being set. `setCanvasArea`/`setLayerCanvasArea`/`setMeshElement` avoid
+  that by installing the real view widget directly as a page of the
+  stack (`_installPage`, swapping out a placeholder `QWidget` via
+  `QStackedLayout.insertWidget`/`removeWidget`) rather than adding it
+  into a wrapper - `QStackedLayout` reparents whatever it holds to be a
+  direct child of the widget that owns it, so every page ends up a true
+  sibling of `_viewModeTabs`. `setLayerCanvasArea` also adds "Show Layer
+  Numbers" to the View menu when the layer canvas's artist exposes
+  `setShowLabels` (`LayerCanvasArtist`, see below); `setCanvasArea`'s own
+  "Zoom to Fit" action resets both the Canvas and Layer pages together
   (`_resetCanvasViews`) rather than needing a second action for whichever
   of the two isn't currently on screen.
 - **`canvasElement.py`** — the 2D views: `CanvasArtist` (paints
@@ -337,9 +373,12 @@ concern, not domain state).
   `_paintOverlay` (a hook `CanvasArtist.paintEvent` calls after the
   selection overlay, a no-op on the base class) draws each cell's height
   as text when `showLabels` is on and the cell is large enough to read.
-  Because only the fill differs, the same Wand/Brush tools select
-  identically on both panes - selection is canvas-wide state, not
-  per-view.
+  `CanvasArea` fixes `self._useLayers = isinstance(self.artist,
+  LayerCanvasArtist)` once at construction and passes it as `useLayers`
+  on every `ToolController.press`/`drag`/`release` call, which is what
+  lets `WandTool` sample `canvas.layers` instead of `canvas.map` for a
+  click on this pane (see the tool layer above) - the same tools run on
+  both panes, but a color-dependent one can tell which array to read.
 - **`meshElement.py`** — the 3D print preview: `MeshElement`, a
   `QOpenGLWidget` doing one flat-shaded draw call per palette color (plus
   the base plate) straight off `Project.mesh.meshes`, with simple

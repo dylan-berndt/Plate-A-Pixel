@@ -19,7 +19,12 @@ class ToolController(QObject):
     rather than re-resolving a possibly different one. Tools themselves
     only ever call canvasController methods (selection, height, hollow/
     margin - see CanvasController), so that's what actually gets handed
-    to onPress/onDrag/onRelease, not the ProjectController itself."""
+    to onPress/onDrag/onRelease, not the ProjectController itself.
+
+    `useLayers` (set by CanvasArea depending on which pane - color or
+    layer canvas - sent the event) rides along on every call and is
+    forwarded to the tool unchanged; see FunctionalTool.onPress for what
+    a tool does with it."""
 
     activeToolChanged = Signal(object)  # Tool
 
@@ -33,24 +38,24 @@ class ToolController(QObject):
         self.registry.setActiveTool(name)
         self.activeToolChanged.emit(self.registry.activeTool)
 
-    def press(self, pos):
+    def press(self, pos, useLayers=False):
         self._gestureController = self.appController.activeController
         if self._gestureController is not None:
             self._gestureController.beginGesture()
-        self._dispatch("onPress", pos)
+        self._dispatch("onPress", pos, useLayers)
 
-    def drag(self, pos):
-        self._dispatch("onDrag", pos)
+    def drag(self, pos, useLayers=False):
+        self._dispatch("onDrag", pos, useLayers)
 
-    def release(self, pos):
-        self._dispatch("onRelease", pos)
+    def release(self, pos, useLayers=False):
+        self._dispatch("onRelease", pos, useLayers)
         if self._gestureController is not None:
             self._gestureController.endGesture()
         self._gestureController = None
 
-    def _dispatch(self, handlerName, pos):
+    def _dispatch(self, handlerName, pos, useLayers=False):
         tool = self.registry.activeTool
         controller = self._gestureController or self.appController.activeController
         if tool is None or controller is None:
             return
-        getattr(tool, handlerName)(controller.canvasController, pos)
+        getattr(tool, handlerName)(controller.canvasController, pos, useLayers=useLayers)

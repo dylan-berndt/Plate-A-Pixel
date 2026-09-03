@@ -424,10 +424,14 @@ class CanvasArea(QWidget):
     navigation, not an edit.
 
     `artistClass` swaps in LayerCanvasArtist (above) for the layer view
-    slotted into AppWindow.setLayerCanvasArea - everything else here
-    (mouse routing, pan/zoom) is identical between the color and layer
-    panes, so this is the one seam rather than a second near-duplicate
-    widget class."""
+    slotted into AppWindow.setLayerCanvasArea - mouse routing and pan/
+    zoom are identical between the color and layer panes, so this is the
+    one seam rather than a second near-duplicate widget class. The one
+    thing that does differ is passed through, not branched on here: which
+    pane a gesture started on decides `useLayers` (see
+    ToolController.press/FunctionalTool.onPress), so a tool whose
+    selection logic depends on it - WandTool - can sample canvas.layers
+    instead of canvas.map when the click came from the layer canvas."""
 
     zoomChanged = Signal(float)
 
@@ -440,6 +444,12 @@ class CanvasArea(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.artist = artistClass(theme=self._theme)
         layout.addWidget(self.artist)
+
+        # Fixed for this pane's lifetime (the artist class never changes
+        # after construction) - tells ToolController whether a gesture
+        # starting here should sample canvas.layers instead of canvas.map
+        # (see FunctionalTool.onPress/WandTool.onPress).
+        self._useLayers = isinstance(self.artist, LayerCanvasArtist)
 
         self._toolGestureActive = False
         self._panning = False
@@ -467,7 +477,7 @@ class CanvasArea(QWidget):
             pos = self.artist.mouseToCanvas(event.position())
             if pos is not None:
                 self._toolGestureActive = True
-                self._appController.toolController.press(pos)
+                self._appController.toolController.press(pos, useLayers=self._useLayers)
 
     def mouseMoveEvent(self, event):
         if self._panning:
@@ -481,7 +491,7 @@ class CanvasArea(QWidget):
         if self._toolGestureActive:
             pos = self.artist.clampToCanvas(event.position())
             if pos is not None:
-                self._appController.toolController.drag(pos)
+                self._appController.toolController.drag(pos, useLayers=self._useLayers)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MiddleButton and self._panning:
@@ -491,7 +501,7 @@ class CanvasArea(QWidget):
         if event.button() == Qt.LeftButton and self._toolGestureActive:
             pos = self.artist.clampToCanvas(event.position())
             if pos is not None:
-                self._appController.toolController.release(pos)
+                self._appController.toolController.release(pos, useLayers=self._useLayers)
             self._toolGestureActive = False
 
     def wheelEvent(self, event):

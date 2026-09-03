@@ -51,6 +51,22 @@ def test_bucket_select_contiguous_stops_at_color_boundary(canvas):
     assert canvas.selection.sum() == len(RED_BLOCK)
 
 
+def test_bucket_select_source_groups_by_that_array_instead_of_color(canvas):
+    # RED_BLOCK and RED_ISLAND are the same color but not the same layer
+    # height here - passing source=canvas.layers must group purely by
+    # that shared height, ignoring the color match bucketSelect's default
+    # (source=canvas.map) would otherwise use.
+    canvas.layers[:] = 1
+    canvas.layers[RED_ISLAND] = 9
+
+    canvas.bucketSelect((0, 0), mode="replace", contiguous=False, source=canvas.layers)
+
+    for pos in RED_BLOCK:
+        assert canvas.selection[pos]
+    assert not canvas.selection[RED_ISLAND]  # different height, excluded despite matching color
+    assert canvas.selection[5, 0]  # background pixel, but shares height 1 - included
+
+
 def test_bucket_select_noncontiguous_grabs_disconnected_same_color(canvas):
     canvas.bucketSelect((0, 0), mode="replace", contiguous=False, diagonal=True)
 

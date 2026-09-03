@@ -6,7 +6,13 @@ class WandTool(FunctionalTool):
     "bucket" tool: bucketSelect(contiguous=False) already selects every
     cell matching the clicked position's color exactly like a color-wand
     pick would, so "wand" and "bucket" are the same operation with one
-    option (contiguous) toggled, not two separate tools."""
+    option (contiguous) toggled, not two separate tools.
+
+    On the layer canvas (useLayers=True - see FunctionalTool.onPress),
+    "matching" means matching *height* instead of matching color: the
+    same click groups pixels by canvas.layers rather than canvas.map, so
+    picking a component out by its assigned height works the same way
+    color-picking does on the color canvas."""
 
     def __init__(self):
         super().__init__(
@@ -22,11 +28,13 @@ class WandTool(FunctionalTool):
             selections={"mode": "replace", "contiguous": False, "diagonal": True},
         )
 
-    def onPress(self, controller, pos):
+    def onPress(self, controller, pos, useLayers=False):
+        canvas = controller.project.canvas
         with controller.projectController.editing(signal=controller.projectController.selectionChanged):
-            controller.project.canvas.bucketSelect(
+            canvas.bucketSelect(
                 pos,
                 contiguous=self.selections["contiguous"],
                 diagonal=self.selections["diagonal"],
                 mode=self.selections["mode"],
+                source=canvas.layers if useLayers else canvas.map,
             )

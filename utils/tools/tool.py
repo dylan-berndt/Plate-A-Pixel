@@ -40,15 +40,25 @@ class FunctionalTool(Tool):
 
     onPress is the only handler a tool must implement - onDrag/onRelease
     default to no-ops for tools (like Wand) that only care about a single
-    click."""
+    click.
 
-    def onPress(self, controller, pos):
+    `useLayers` says which canvas view the gesture started on (see
+    CanvasArea/LayerCanvasArtist) - False for the color canvas, True for
+    the layer canvas. It's ToolController's job to resolve that from
+    which pane sent the event and pass it through uniformly to whichever
+    tool is active; only a tool whose selection logic is actually
+    color/height-dependent (WandTool) needs to look at it - see its
+    onPress for how that plays out. A spatial tool like BrushSelectTool
+    ignores it, since a radius-based stamp means the same thing on either
+    pane."""
+
+    def onPress(self, controller, pos, useLayers=False):
         raise NotImplementedError
 
-    def onDrag(self, controller, pos):
+    def onDrag(self, controller, pos, useLayers=False):
         pass
 
-    def onRelease(self, controller, pos):
+    def onRelease(self, controller, pos, useLayers=False):
         pass
 
 

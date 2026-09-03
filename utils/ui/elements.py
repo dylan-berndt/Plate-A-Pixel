@@ -443,7 +443,11 @@ class ViewModeTabs(QWidget):
         self._buttons = {}
         for mode in modes:
             button = QPushButton(mode)
-            button.setFixedSize(44, 26)
+            # Height fixed for a consistent tab strip; width left to
+            # QPushButton's own sizeHint (text plus the QSS padding
+            # below) rather than a shared fixed size tuned for "2D"/"3D" -
+            # that clipped/cramped longer labels like "Canvas"/"Mesh".
+            button.setFixedHeight(28)
             button.setCursor(Qt.PointingHandCursor)
             button.clicked.connect(lambda checked=False, m=mode: self._select(m))
             layout.addWidget(button)
@@ -465,6 +469,7 @@ class ViewModeTabs(QWidget):
                     border-top-left-radius: 0px; border-top-right-radius: 0px;
                     border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
                     font-size: 10.5px; font-weight: 700;
+                    padding: 0 14px;
                 }}
                 QPushButton:hover {{ background: {hoverBg}; }}
             """)

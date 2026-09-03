@@ -29,18 +29,20 @@ class AppWindow(QMainWindow):
     so this class doesn't import Qt-OpenGL machinery it doesn't
     otherwise need.
 
-    The work area is a "Canvas"/"Layer"/"Mesh" ViewModeTabs row followed
-    by a QStackedLayout of the three matching pages (color canvas, layer
-    canvas, mesh view) - one view per page, only one visible at a time.
-    The tabs are laid out in normal document flow directly above the
-    stack, not floated on top of it: earlier this was a widget floating
-    over the stack with manually-positioned coordinates, which fought
-    Qt's compositing of the mesh page's QOpenGLWidget (the tabs could
-    end up painted *under* it - see QOpenGLWidget's own docs on
-    overlapping widgets) and needed a hand-tuned offset to line up with
-    the tool options bar above it. A real layout row sidesteps both:
-    nothing ever overlaps the GL surface, and alignment falls out of the
-    layout instead of a magic-number move().
+    The work area is a QStackedLayout of three pages - "Canvas" (the
+    color canvas), "Layer" (the layer canvas), "Mesh" (the mesh view) -
+    with a ViewModeTabs floating over its top-left corner rather than
+    laid out beside/above it, so the tabs and whichever page is showing
+    genuinely share the same screen area. Overlapping a QOpenGLWidget
+    (the mesh page's MeshElement) with an ordinary widget only composites
+    reliably in Qt when the two are direct siblings under the *same*
+    parent (see QOpenGLWidget's own docs on overlaps and
+    Qt.WA_AlwaysStackOnTop) - so setCanvasArea/setLayerCanvasArea/
+    setMeshElement below install the real view widget directly as a page
+    of this QStackedLayout (replacing a placeholder), rather than into a
+    wrapper QWidget the way earlier versions did, which put ViewModeTabs
+    and MeshElement two parents apart and left the tabs painted under it
+    on at least one real setup despite WA_AlwaysStackOnTop being set.
 
     ProjectController has no dedicated "dirty changed" or "undo state
     changed" signal (see ARCHITECTURE.md - isDirty/canUndo/canRedo are
@@ -115,51 +117,39 @@ class AppWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)
 
         centerWidget = QWidget()
-        centerColumn = QVBoxLayout(centerWidget)
-        centerColumn.setContentsMargins(0, 0, 0, 0)
-        centerColumn.setSpacing(0)
-
-        # A real row in the layout, not a floating overlay - see the class
-        # docstring for why. Left-aligned with a small inset to match the
-        # squared top sitting just under the tool options bar.
-        self._viewModeTabs = ViewModeTabs(
-            modes=("Canvas", "Layer", "Mesh"), active="Canvas", onChange=self._setViewMode, theme=self.theme,
-        )
-        tabRow = QHBoxLayout()
-        tabRow.setContentsMargins(10, 0, 0, 0)
-        tabRow.setSpacing(0)
-        tabRow.addWidget(self._viewModeTabs, 0, Qt.AlignLeft)
-        tabRow.addStretch(1)
-        centerColumn.addLayout(tabRow)
-
-        stackContainer = QWidget()
-        self._centerStack = QStackedLayout(stackContainer)
+        self._centerStack = QStackedLayout(centerWidget)
         self._centerStack.setContentsMargins(0, 0, 0, 0)
-        centerColumn.addWidget(stackContainer, 1)
 
-        # -- page 0, "Canvas" ----------------------------------------------
-        # Filled in by setCanvasArea once that view exists.
+        # Blank placeholders, each replaced in place (see _installPage)
+        # once main.py provides the real view - a plain, otherwise-unused
+        # QWidget makes the swap simple to detect (identity check) and
+        # gives QStackedLayout something valid to hold in the meantime.
         self._canvasSlot = QWidget()
-        self._canvasSlotLayout = QVBoxLayout(self._canvasSlot)
-        self._canvasSlotLayout.setContentsMargins(0, 0, 0, 0)
         self.canvasArea = None
         self._centerStack.addWidget(self._canvasSlot)
 
-        # -- page 1, "Layer" -------------------------------------------------
-        # Filled in by setLayerCanvasArea once that view exists.
         self._layerCanvasSlot = QWidget()
-        self._layerCanvasSlotLayout = QVBoxLayout(self._layerCanvasSlot)
-        self._layerCanvasSlotLayout.setContentsMargins(0, 0, 0, 0)
         self.layerCanvasArea = None
         self._centerStack.addWidget(self._layerCanvasSlot)
 
-        # -- page 2, "Mesh" --------------------------------------------------
-        # Filled in by setMeshElement once that view exists.
         self._meshSlot = QWidget()
-        self._meshSlotLayout = QVBoxLayout(self._meshSlot)
-        self._meshSlotLayout.setContentsMargins(0, 0, 0, 0)
         self.meshElement = None
         self._centerStack.addWidget(self._meshSlot)
+
+        self._viewModeTabs = ViewModeTabs(
+            modes=("Canvas", "Layer", "Mesh"), active="Canvas", onChange=self._setViewMode, theme=self.theme,
+            parent=centerWidget,
+        )
+        # Flush against centerWidget's own top edge - centerWidget starts
+        # exactly where the tool options bar ends, so this is what puts
+        # the tabs' squared top against the bottom of that bar rather
+        # than leaving a gap.
+        self._viewModeTabs.move(10, 0)
+        # The documented requirement for an ordinary widget to reliably
+        # stay visually on top of a QOpenGLWidget sibling (see the class
+        # docstring) - raise_() alone isn't enough on every platform.
+        self._viewModeTabs.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+        self._viewModeTabs.raise_()
 
         splitter.addWidget(centerWidget)
 
@@ -217,8 +207,27 @@ class AppWindow(QMainWindow):
 
     # -- slotting in the Canvas/Layer/Mesh views once they exist ----------
 
+    def _installPage(self, placeholder, widget):
+        """Swaps `widget` in for `placeholder` as a page of _centerStack,
+        preserving whichever one is current - see the class docstring for
+        why this (not adding `widget` into a wrapper QWidget) matters:
+        it's what keeps every page a direct child of centerWidget, a true
+        sibling of _viewModeTabs."""
+        index = self._centerStack.indexOf(placeholder)
+        wasCurrent = self._centerStack.currentWidget() is placeholder
+        self._centerStack.insertWidget(index, widget)
+        self._centerStack.removeWidget(placeholder)
+        placeholder.deleteLater()
+        if wasCurrent:
+            self._centerStack.setCurrentWidget(widget)
+        # Defensive re-raise: installing a page can, on some platforms,
+        # disturb the sibling stacking order WA_AlwaysStackOnTop depends
+        # on (see the class docstring) - cheap enough to just always redo.
+        self._viewModeTabs.raise_()
+
     def setCanvasArea(self, widget):
-        self._canvasSlotLayout.addWidget(widget)
+        self._installPage(self._canvasSlot, widget)
+        self._canvasSlot = widget
         self.canvasArea = widget
         if hasattr(widget, "zoomChanged"):
             widget.zoomChanged.connect(self._onZoomChanged)
@@ -231,7 +240,8 @@ class AppWindow(QMainWindow):
         self._statusBar.refresh(self._appController.activeController, zoomPercent=percent)
 
     def setLayerCanvasArea(self, widget):
-        self._layerCanvasSlotLayout.addWidget(widget)
+        self._installPage(self._layerCanvasSlot, widget)
+        self._layerCanvasSlot = widget
         self.layerCanvasArea = widget
         artist = getattr(widget, "artist", None)
         if artist is not None and hasattr(artist, "setShowLabels"):
@@ -251,7 +261,8 @@ class AppWindow(QMainWindow):
                 widget.resetView()
 
     def setMeshElement(self, widget):
-        self._meshSlotLayout.addWidget(widget)
+        self._installPage(self._meshSlot, widget)
+        self._meshSlot = widget
         self.meshElement = widget
         if self._appController.activeController is not None and hasattr(widget, "bindProject"):
             widget.bindProject(self._appController.activeController)
@@ -260,6 +271,9 @@ class AppWindow(QMainWindow):
 
     def _setViewMode(self, mode):
         self._centerStack.setCurrentIndex(self._VIEW_MODE_INDEX[mode])
+        # See _installPage - switching pages can disturb stacking order
+        # the same way installing one can.
+        self._viewModeTabs.raise_()
 
     def setExportHandler(self, handler):
         """`handler` is called with no arguments when File > Export is
