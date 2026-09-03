@@ -3,7 +3,7 @@ from collections import Counter
 import pytest
 
 from utils.data.pixelPlan import Face, PixelPlan
-from utils.data.pixelComponents import componentTriangles, BULGE_SIZE, TUBE_MARGIN, WALL_THICKNESS
+from utils.data.pixelComponents import componentTriangles, componentTrianglesFast, BULGE_SIZE, TUBE_MARGIN, WALL_THICKNESS
 from utils.data.pixelComponents import _earClip, _signedArea
 
 
@@ -342,3 +342,46 @@ def test_ear_clip_makes_progress_on_a_near_degenerate_remainder():
         for a, b, c in triangles
     )
     assert totalArea == pytest.approx(abs(_signedArea(loop)), abs=1e-6)
+
+
+# componentTrianglesFast (Mesh.fastPreview) trades real watertightness for
+# speed - see its own docstring - so these check it encloses the same
+# volume as the exact path, not that _assertWatertight passes.
+
+def test_fast_preview_matches_the_exact_volume_of_a_bulged_single_pixel():
+    plan = PixelPlan(y=0, x=0, color=0, height=1, bulged={Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST})
+
+    exact = componentTriangles([plan], hollow=False)
+    fast = componentTrianglesFast([plan])
+
+    assert _volume(fast) == pytest.approx(_volume(exact), abs=1e-6)
+
+
+def test_fast_preview_matches_the_exact_volume_of_a_concave_l_shape():
+    exact = componentTriangles(_lShapePlans(height=1), hollow=False)
+    fast = componentTrianglesFast(_lShapePlans(height=1))
+
+    assert _volume(fast) == pytest.approx(_volume(exact), abs=1e-6)
+
+
+def test_fast_preview_matches_the_exact_volume_of_a_tall_shape_with_a_tube():
+    exact = componentTriangles(_lShapePlans(height=4), hollow=False)
+    fast = componentTrianglesFast(_lShapePlans(height=4))
+
+    assert _volume(fast) == pytest.approx(_volume(exact), abs=1e-6)
+
+
+def test_fast_preview_matches_the_exact_volume_of_a_ring_around_a_hole():
+    present = [(y, x) for y in range(3) for x in range(3) if (y, x) != (1, 1)]
+    plans = []
+    for (y, x) in present:
+        fused, bulged = set(), set()
+        for face in Face:
+            neighbor = face.neighbor(y, x)
+            (fused if neighbor in present else bulged).add(face)
+        plans.append(PixelPlan(y=y, x=x, color=0, height=1, fused=fused, bulged=bulged))
+
+    exact = componentTriangles(plans, hollow=False)
+    fast = componentTrianglesFast(plans)
+
+    assert _volume(fast) == pytest.approx(_volume(exact), abs=1e-5)

@@ -25,7 +25,10 @@ class _CanvasSnapshot:
 
 class _MeshWorker(QThread):
     """Runs one Mesh._calculateMesh() off the UI thread against a frozen
-    snapshot, then hands the finished Mesh back via a queued signal."""
+    snapshot, then hands the finished Mesh back via a queued signal.
+    Always computes with fastPreview on - the live viewport doesn't need
+    (and can't afford, per-edit) a mesh that's actually watertight; export
+    forces a fresh, exact recompute of its own (see Project.rebuildMesh)."""
 
     meshComputed = Signal(object)  # Mesh
 
@@ -42,6 +45,7 @@ class _MeshWorker(QThread):
         mesh = Mesh()
         mesh.canvas = self._snapshot
         mesh.hollow = self._viewSettings.hollow
+        mesh.fastPreview = True
         mesh.baseMargin = self._viewSettings.baseMargin
         mesh.tubeMargin = self._viewSettings.tubeMargin
         mesh.wallThickness = self._viewSettings.wallThickness

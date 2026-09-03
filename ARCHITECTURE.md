@@ -37,8 +37,12 @@ when to redraw. It never calls into `utils/data/` directly.
 - **`Mesh`** (`mesh.py`, `pixelPlan.py`, `pixelComponents.py`) — turns
   `Canvas.map`/`.layers` into one printable solid per color via
   `PixelPlanner`/`componentTriangles`. Recomputes only when its cached
-  copy of `map`/`layers`/`hollow`/`baseMargin`/`tubeMargin`/
-  `wallThickness`/`bulgeSize` actually changed. The last three are
+  copy of `map`/`layers`/`hollow`/`fastPreview`/`baseMargin`/`tubeMargin`/
+  `wallThickness`/`bulgeSize` actually changed. `fastPreview` swaps in
+  `componentTrianglesFast` - much cheaper but not actually watertight
+  (see its own docstring), used only by the live-viewport background
+  worker (`ProjectController._MeshWorker`); export always forces a fresh
+  recompute with it off (`Project.rebuildMesh`). The next three are
   passed straight through to `componentTriangles` (see
   `pixelComponents.py`'s `TUBE_MARGIN`/`WALL_THICKNESS`/`BULGE_SIZE`
   constants, which are now just their defaults, not the only values in

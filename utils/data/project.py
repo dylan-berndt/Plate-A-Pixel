@@ -81,9 +81,14 @@ class Project:
 
     def rebuildMesh(self):
         """Recomputes the mesh from the canvas's current state and this
-        project's view settings. Cheap to call after every edit - Mesh's
-        own cache (_checkForUpdate) no-ops when nothing actually changed."""
+        project's view settings, always with the exact (not fastPreview)
+        generator - this is the export path (see exportObjs), and
+        self.mesh may currently hold a fastPreview mesh swapped in by
+        ProjectController's live-viewport worker. Forcing fastPreview off
+        here is itself a change _checkForUpdate notices, so this always
+        recomputes even if the canvas hasn't changed since that swap."""
         self._syncMeshSettings()
+        self.mesh.fastPreview = False
         self.mesh._calculateMesh()
         return self.mesh
 

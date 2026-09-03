@@ -300,3 +300,50 @@ def test_raising_a_selection_on_a_real_image_stays_watertight():
             verts = [(v.x, v.y, v.z) for v in component]
             faces = [[i, i + 1, i + 2] for i in range(0, len(component), 3)]
             assert trimesh.Trimesh(vertices=verts, faces=faces, process=True).is_watertight
+
+
+def _totalVolume(mesh, canvas):
+    vol = 0.0
+    for components in mesh.meshes[:len(canvas.palette)]:
+        for triangles in components:
+            if not triangles:
+                continue
+            verts = [(v.x, v.y, v.z) for v in triangles]
+            faces = [[i, i + 1, i + 2] for i in range(0, len(triangles), 3)]
+            vol += abs(trimesh.Trimesh(vertices=verts, faces=faces, process=True).volume)
+    return vol
+
+
+def test_fast_preview_matches_the_exact_volume(two_color_canvas):
+    # fastPreview (componentTrianglesFast) trades away real watertightness
+    # for speed - it should still enclose the same volume as the exact path.
+    two_color_canvas.layers[:] = 1
+
+    exact = Mesh()
+    exact.canvas = two_color_canvas
+    exact._calculateMesh()
+
+    fast = Mesh()
+    fast.canvas = two_color_canvas
+    fast.fastPreview = True
+    fast._calculateMesh()
+
+    assert total_real_triangles(fast, two_color_canvas) > 0
+    assert _totalVolume(fast, two_color_canvas) == pytest.approx(_totalVolume(exact, two_color_canvas), abs=1e-3)
+
+
+def test_toggling_fast_preview_forces_a_recompute_even_with_nothing_else_changed(two_color_canvas):
+    two_color_canvas.layers[:] = 1
+    mesh = Mesh()
+    mesh.canvas = two_color_canvas
+    mesh._calculateMesh()
+    exactTriangleCount = total_real_triangles(mesh, two_color_canvas)
+
+    mesh.fastPreview = True
+    mesh._calculateMesh()
+    fastTriangleCount = total_real_triangles(mesh, two_color_canvas)
+
+    # componentTriangles and componentTrianglesFast tile the same geometry
+    # differently - if _checkForUpdate missed the flag flip, _calculateMesh
+    # would have no-op'd and left the exact (unequal) triangle count.
+    assert fastTriangleCount != exactTriangleCount

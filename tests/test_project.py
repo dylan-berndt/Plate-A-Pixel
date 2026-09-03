@@ -43,6 +43,29 @@ def test_rebuild_mesh_produces_a_mesh_for_every_palette_color_plus_base(project)
     assert len(mesh.meshes) == len(project.canvas.palette) + 1
 
 
+def test_rebuild_mesh_forces_the_exact_generator_even_after_a_fast_preview_mesh_was_swapped_in(project):
+    # Simulates what ProjectController._onMeshComputed does after a live
+    # background worker finishes: project.mesh gets replaced by one built
+    # with fastPreview on. Export (rebuildMesh) must never hand that mesh
+    # to exportObjs as-is - it has to force a fresh, exact recompute.
+    import trimesh
+
+    project.mesh.fastPreview = True
+    project.mesh._calculateMesh()
+    assert project.mesh.fastPreview is True
+
+    project.rebuildMesh()
+
+    assert project.mesh.fastPreview is False
+    for colorMeshes in project.mesh.meshes:
+        for component in colorMeshes:
+            if not component:
+                continue
+            verts = [(v.x, v.y, v.z) for v in component]
+            faces = [[i, i + 1, i + 2] for i in range(0, len(component), 3)]
+            assert trimesh.Trimesh(vertices=verts, faces=faces, process=True).is_watertight
+
+
 def test_save_load_round_trip_preserves_image_layers_and_palette(tmp_path, project):
     path = tmp_path / "test.pap"
     project.save(str(path))

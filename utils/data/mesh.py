@@ -1,7 +1,7 @@
 import numpy as np
 from .canvas import *
 from .pixelPlan import planGrid, fusedPairs, diagonalPairs
-from .pixelComponents import componentTriangles, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
+from .pixelComponents import componentTriangles, componentTrianglesFast, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
 
 BASE_HEIGHT = 1
 
@@ -12,12 +12,20 @@ class Mesh:
     plainWalls per side, componentTriangles (pixelComponents.py) turns one
     connected group's plans into a hull, and everything below wires those
     together - grouping pixels into physically connected pieces per color
-    and collecting warnings along the way."""
+    and collecting warnings along the way.
+
+    fastPreview swaps that for componentTrianglesFast - a much cheaper but
+    not-actually-watertight mesh, meant only for the live viewport while
+    editing. Export always recomputes with fastPreview off (see
+    Project.rebuildMesh)."""
 
     def __init__(self):
         self.canvas: Canvas = None
 
         self.hollow = False
+        # Trades away real watertightness for speed (see componentTrianglesFast)
+        # - only ever set for the live-preview worker, never for export.
+        self.fastPreview = False
         # How many grid cells the base plate extends past the canvas's own
         # row/column extent on every side - 0 still fills every hole
         # inside the canvas, just without a border past its edge.
@@ -35,6 +43,7 @@ class Mesh:
         self.mapCache: np.array = None
         self.layerCache: np.array = None
         self.hollowCache = self.hollow
+        self.fastPreviewCache = self.fastPreview
         self.baseMarginCache = self.baseMargin
         self.tubeMarginCache = self.tubeMargin
         self.wallThicknessCache = self.wallThickness
@@ -65,13 +74,17 @@ class Mesh:
             or not np.array_equal(self.layerCache, self.canvas.layers)
         )
         hollowChanged = self.hollow != self.hollowCache
+        fastPreviewChanged = self.fastPreview != self.fastPreviewCache
         baseMarginChanged = self.baseMargin != self.baseMarginCache
         geometryChanged = (
             self.tubeMargin != self.tubeMarginCache
             or self.wallThickness != self.wallThicknessCache
             or self.bulgeSize != self.bulgeSizeCache
         )
-        return mapChanged or layersChanged or hollowChanged or baseMarginChanged or geometryChanged
+        return (
+            mapChanged or layersChanged or hollowChanged or fastPreviewChanged
+            or baseMarginChanged or geometryChanged
+        )
 
     def _calculateMesh(self):
         if not self._checkForUpdate():
@@ -80,6 +93,7 @@ class Mesh:
         self.mapCache = self.canvas.map.copy()
         self.layerCache = self.canvas.layers.copy()
         self.hollowCache = self.hollow
+        self.fastPreviewCache = self.fastPreview
         self.baseMarginCache = self.baseMargin
         self.tubeMarginCache = self.tubeMargin
         self.wallThicknessCache = self.wallThickness
@@ -138,10 +152,16 @@ class Mesh:
         meshes = [[] for _ in range(colorCount)]
         perColorRoots = {}
         for (color, root), groupPlans in groups.items():
-            meshes[color].append(componentTriangles(
-                groupPlans, self.hollow,
-                tubeMargin=self.tubeMargin, wallThickness=self.wallThickness, bulgeSize=self.bulgeSize,
-            ))
+            if self.fastPreview:
+                triangles = componentTrianglesFast(
+                    groupPlans, tubeMargin=self.tubeMargin, bulgeSize=self.bulgeSize,
+                )
+            else:
+                triangles = componentTriangles(
+                    groupPlans, self.hollow,
+                    tubeMargin=self.tubeMargin, wallThickness=self.wallThickness, bulgeSize=self.bulgeSize,
+                )
+            meshes[color].append(triangles)
             perColorRoots.setdefault(color, []).append(root)
 
         for color, roots in perColorRoots.items():
