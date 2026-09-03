@@ -1,5 +1,7 @@
+import atexit
 import sys
 import traceback
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -7,14 +9,38 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from ..data.project import Project
-from ..data.mesh import Mesh
+from ..data.mesh import Mesh, computeMeshData
 from .canvasController import CanvasController
+
+# A live recompute previously ran computeMeshData() on the QThread itself -
+# off the *thread* the UI runs on, but still inside the same process, so it
+# still held the GIL against the main thread's own Python/Qt work for its
+# entire duration (CPython only hands the GIL to a waiting thread between
+# bytecode instructions, and a single manifold3d CSG call - or a long run of
+# pure-Python loops - doesn't yield it at all until it returns). A separate
+# process has its own GIL, so submitting the real work there and blocking
+# this thread on the result (a blocking wait releases the GIL properly,
+# same as any other blocking I/O) leaves the main thread fully free for the
+# whole computation, not just between calls into it.
+#
+# One shared, lazily-started, single-worker pool (not one per project or
+# per recompute) - starting a process costs real time, so this pays that
+# cost once per app run rather than once per edit.
+_meshProcessPool = None
+
+
+def _getMeshProcessPool():
+    global _meshProcessPool
+    if _meshProcessPool is None:
+        _meshProcessPool = ProcessPoolExecutor(max_workers=1)
+        atexit.register(_meshProcessPool.shutdown, cancel_futures=True)
+    return _meshProcessPool
 
 
 class _CanvasSnapshot:
-    """A frozen stand-in for Canvas carrying only what Mesh._calculateMesh
+    """A frozen stand-in for Canvas carrying only what computeMeshData
     actually reads (map, layers, len(palette)). Built once when a rebuild
-    is requested so the background thread computing it never touches the
+    is requested so the worker process computing it never touches the
     live Canvas, which may keep changing while that computation runs."""
 
     def __init__(self, canvas):
@@ -24,7 +50,7 @@ class _CanvasSnapshot:
 
 
 class _MeshWorker(QThread):
-    """Runs one Mesh._calculateMesh() off the UI thread against a frozen
+    """Runs one mesh recompute off the UI thread against a frozen
     snapshot, then hands the finished Mesh back via a queued signal.
     Always computes with fastPreview on - the live viewport doesn't need
     (and can't afford, per-edit) a mesh that's actually watertight; export
@@ -41,6 +67,20 @@ class _MeshWorker(QThread):
         # individual mesh-geometry parameters.
         self._viewSettings = viewSettings
 
+    def _computeMeshData(self):
+        """Submits the real computation to the shared worker process and
+        blocks for its result - split out from run() so tests can
+        monkeypatch just this one method (to simulate failure or slowness)
+        without needing to reach into a separate process to do it."""
+        future = _getMeshProcessPool().submit(
+            computeMeshData,
+            self._snapshot.map, self._snapshot.layers, len(self._snapshot.palette),
+            self._viewSettings.hollow, True,
+            self._viewSettings.baseMargin, self._viewSettings.tubeMargin,
+            self._viewSettings.wallThickness, self._viewSettings.bulgeSize,
+        )
+        return future.result()
+
     def run(self):
         mesh = Mesh()
         mesh.canvas = self._snapshot
@@ -51,18 +91,19 @@ class _MeshWorker(QThread):
         mesh.wallThickness = self._viewSettings.wallThickness
         mesh.bulgeSize = self._viewSettings.bulgeSize
         try:
-            mesh._calculateMesh()
+            mesh._refreshCaches()
+            mesh.meshes, mesh.warnings = self._computeMeshData()
         except Exception:
             # An exception here (e.g. trimesh hitting a boolean-op case
-            # its installed backends can't handle) must never be silently
-            # swallowed by the thread and left there: without this,
-            # meshComputed never fires, self._meshWorker (in
-            # ProjectController) never clears, and every future
-            # rebuildMesh() call just queues behind a worker that has
-            # already died - the mesh view goes stale forever with no
-            # visible sign why. Emitting the still-empty Mesh keeps the
-            # pipeline alive; the traceback at least says why nothing's
-            # there instead of nothing at all.
+            # its installed backends can't handle, or the worker process
+            # itself dying) must never be silently swallowed and left
+            # there: without this, meshComputed never fires,
+            # self._meshWorker (in ProjectController) never clears, and
+            # every future rebuildMesh() call just queues behind a worker
+            # that has already died - the mesh view goes stale forever
+            # with no visible sign why. Emitting the still-empty Mesh
+            # keeps the pipeline alive; the traceback at least says why
+            # nothing's there instead of nothing at all.
             traceback.print_exc(file=sys.stderr)
         self.meshComputed.emit(mesh)
 

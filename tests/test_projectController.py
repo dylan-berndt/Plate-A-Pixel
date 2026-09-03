@@ -5,7 +5,7 @@ from utils.data.canvas import Canvas
 from utils.data.mesh import Mesh
 from utils.data.project import Project, ViewSettings
 from utils.controllers.canvasController import CanvasController
-from utils.controllers.projectController import ProjectController
+from utils.controllers.projectController import ProjectController, _MeshWorker
 from .fixtures import RED_BLOCK, RED_ISLAND, make_pixel_art
 from .conftest import waitForMeshWorker, spy
 
@@ -182,15 +182,19 @@ def test_project_controller_owns_a_canvas_controller(controller):
 
 
 def test_a_failing_mesh_computation_does_not_wedge_the_pipeline(controller, monkeypatch):
-    # A worker whose Mesh._calculateMesh() raises (e.g. a trimesh boolean
-    # op needing a graph engine backend that isn't installed) must not
-    # leave _meshWorker permanently set - every future rebuildMesh() call
-    # would otherwise just queue behind a worker that has already died,
-    # silently going stale forever with no visible sign why.
+    # A worker whose computation raises (e.g. a trimesh boolean op needing
+    # a graph engine backend that isn't installed, or the worker process
+    # itself dying) must not leave _meshWorker permanently set - every
+    # future rebuildMesh() call would otherwise just queue behind a worker
+    # that has already died, silently going stale forever with no visible
+    # sign why. Patches _MeshWorker's own method rather than
+    # Mesh._calculateMesh - the real computation now runs in a separate
+    # process (see projectController.py), which a patch in this process's
+    # Mesh class can't reach.
     def alwaysFails(self):
-        raise RuntimeError("simulated trimesh failure")
+        raise RuntimeError("simulated computation failure")
 
-    monkeypatch.setattr(Mesh, "_calculateMesh", alwaysFails)
+    monkeypatch.setattr(_MeshWorker, "_computeMeshData", alwaysFails)
 
     ready = spy(controller.meshReady)
     controller.canvasController.setMargin(1)
@@ -272,14 +276,16 @@ def test_an_edit_that_lands_while_the_previous_worker_is_still_running_still_get
     # plausibly finish (and its queued meshComputed could even be
     # delivered, since qWait below pumps events) before this gets a chance
     # to check - so make it artificially slow instead of racing a real one.
-    realCalculateMesh = Mesh._calculateMesh
+    # Patches _MeshWorker's own method rather than Mesh._calculateMesh -
+    # see test_a_failing_mesh_computation_does_not_wedge_the_pipeline for why.
+    realComputeMeshData = _MeshWorker._computeMeshData
 
-    def slowCalculateMesh(self):
+    def slowComputeMeshData(self):
         import time
         time.sleep(0.1)
-        realCalculateMesh(self)
+        return realComputeMeshData(self)
 
-    monkeypatch.setattr(Mesh, "_calculateMesh", slowCalculateMesh)
+    monkeypatch.setattr(_MeshWorker, "_computeMeshData", slowComputeMeshData)
     ready = spy(debounced_controller.meshReady)
 
     debounced_controller.canvasController.setMargin(1)

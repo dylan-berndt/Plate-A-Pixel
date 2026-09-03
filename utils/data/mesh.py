@@ -6,6 +6,86 @@ from .pixelComponents import componentTriangles, componentTrianglesFast, TUBE_MA
 BASE_HEIGHT = 1
 
 
+def computeMeshData(map_, layers, paletteLen, hollow, fastPreview, baseMargin, tubeMargin, wallThickness, bulgeSize):
+    """The actual grouping + triangulation work, as a plain function over
+    arrays and numbers rather than a Canvas/Mesh - Mesh._calculateMesh
+    calls this in-process, and ProjectController's live-preview worker
+    submits it to a separate process instead (see its own module), since
+    a module-level function is what a process pool needs to pickle as a
+    call target. Returns (meshes, warnings), matching Mesh.meshes/
+    .warnings."""
+    canvasRows, canvasCols = map_.shape
+    margin = baseMargin
+    rows, cols = canvasRows + 2 * margin, canvasCols + 2 * margin
+
+    # The base color: one past every real palette color, so it never
+    # collides with an actual color index.
+    baseColor = paletteLen
+    gridMap = np.full((rows, cols), baseColor, dtype=map_.dtype)
+    gridLayers = np.full((rows, cols), -1, dtype=layers.dtype)
+    gridMap[margin:margin + canvasRows, margin:margin + canvasCols] = map_
+    gridLayers[margin:margin + canvasRows, margin:margin + canvasCols] = layers
+
+    # Every cell still empty at this point - a hole inside the canvas, or
+    # anywhere in the margin border - becomes base material: literally
+    # another color, at height 1, run through the exact same
+    # classification as everything else. A real pixel taller than it gets
+    # a completely ordinary bulged wall against it, and the base cells
+    # fuse with each other exactly like any same-color same-height
+    # neighbors always do.
+    emptyMask = gridLayers < 1
+    gridMap[emptyMask] = baseColor
+    gridLayers[emptyMask] = BASE_HEIGHT
+
+    plans = planGrid(gridMap, gridLayers)
+
+    parent = {pos: pos for pos in plans}
+
+    def find(p):
+        while parent[p] != p:
+            parent[p] = parent[parent[p]]
+            p = parent[p]
+        return p
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b in fusedPairs(gridMap, gridLayers):
+        union(a, b)
+    for a, b in diagonalPairs(gridMap, gridLayers):
+        union(a, b)
+
+    groups = {}
+    for pos, plan in plans.items():
+        key = (plan.color, find(pos))
+        groups.setdefault(key, []).append(plan)
+
+    colorCount = paletteLen + 1  # +1 for the base color
+    meshes = [[] for _ in range(colorCount)]
+    perColorRoots = {}
+    for (color, root), groupPlans in groups.items():
+        if fastPreview:
+            triangles = componentTrianglesFast(groupPlans, tubeMargin=tubeMargin, bulgeSize=bulgeSize)
+        else:
+            triangles = componentTriangles(
+                groupPlans, hollow, tubeMargin=tubeMargin, wallThickness=wallThickness, bulgeSize=bulgeSize,
+            )
+        meshes[color].append(triangles)
+        perColorRoots.setdefault(color, []).append(root)
+
+    warnings = []
+    for color, roots in perColorRoots.items():
+        if len(roots) > 1:
+            warnings.append(f"Color {color} produced {len(roots)} disconnected parts.")
+    for (color, root), groupPlans in groups.items():
+        if len(groupPlans) == 1:
+            warnings.append(f"Isolated single-pixel part for color {color}.")
+
+    return meshes, warnings
+
+
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
     planGrid (pixelPlan.py) classifies every cell into fused/bulged/
@@ -86,10 +166,7 @@ class Mesh:
             or baseMarginChanged or geometryChanged
         )
 
-    def _calculateMesh(self):
-        if not self._checkForUpdate():
-            return
-
+    def _refreshCaches(self):
         self.mapCache = self.canvas.map.copy()
         self.layerCache = self.canvas.layers.copy()
         self.hollowCache = self.hollow
@@ -98,78 +175,12 @@ class Mesh:
         self.tubeMarginCache = self.tubeMargin
         self.wallThicknessCache = self.wallThickness
         self.bulgeSizeCache = self.bulgeSize
-        self.warnings = []
 
-        canvasRows, canvasCols = self.canvas.map.shape
-        margin = self.baseMargin
-        rows, cols = canvasRows + 2 * margin, canvasCols + 2 * margin
-
-        # The base color: one past every real palette color, so it never
-        # collides with an actual color index.
-        baseColor = len(self.canvas.palette)
-        gridMap = np.full((rows, cols), baseColor, dtype=self.canvas.map.dtype)
-        gridLayers = np.full((rows, cols), -1, dtype=self.canvas.layers.dtype)
-        gridMap[margin:margin + canvasRows, margin:margin + canvasCols] = self.canvas.map
-        gridLayers[margin:margin + canvasRows, margin:margin + canvasCols] = self.canvas.layers
-
-        # Every cell still empty at this point - a hole inside the canvas,
-        # or anywhere in the margin border - becomes base material:
-        # literally another color, at height 1, run through the exact same
-        # classification as everything else. A real pixel taller
-        # than it gets a completely ordinary bulged wall against it, and
-        # the base cells fuse with each other exactly like any same-color
-        # same-height neighbors always do.
-        emptyMask = gridLayers < 1
-        gridMap[emptyMask] = baseColor
-        gridLayers[emptyMask] = BASE_HEIGHT
-
-        plans = planGrid(gridMap, gridLayers)
-
-        parent = {pos: pos for pos in plans}
-
-        def find(p):
-            while parent[p] != p:
-                parent[p] = parent[parent[p]]
-                p = parent[p]
-            return p
-
-        def union(a, b):
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[ra] = rb
-
-        for a, b in fusedPairs(gridMap, gridLayers):
-            union(a, b)
-        for a, b in diagonalPairs(gridMap, gridLayers):
-            union(a, b)
-
-        groups = {}
-        for pos, plan in plans.items():
-            key = (plan.color, find(pos))
-            groups.setdefault(key, []).append(plan)
-
-        colorCount = len(self.canvas.palette) + 1  # +1 for the base color
-        meshes = [[] for _ in range(colorCount)]
-        perColorRoots = {}
-        for (color, root), groupPlans in groups.items():
-            if self.fastPreview:
-                triangles = componentTrianglesFast(
-                    groupPlans, tubeMargin=self.tubeMargin, bulgeSize=self.bulgeSize,
-                )
-            else:
-                triangles = componentTriangles(
-                    groupPlans, self.hollow,
-                    tubeMargin=self.tubeMargin, wallThickness=self.wallThickness, bulgeSize=self.bulgeSize,
-                )
-            meshes[color].append(triangles)
-            perColorRoots.setdefault(color, []).append(root)
-
-        for color, roots in perColorRoots.items():
-            if len(roots) > 1:
-                self.warnings.append(f"Color {color} produced {len(roots)} disconnected parts.")
-
-        for (color, root), groupPlans in groups.items():
-            if len(groupPlans) == 1:
-                self.warnings.append(f"Isolated single-pixel part for color {color}.")
-
-        self.meshes = meshes
+    def _calculateMesh(self):
+        if not self._checkForUpdate():
+            return
+        self._refreshCaches()
+        self.meshes, self.warnings = computeMeshData(
+            self.canvas.map, self.canvas.layers, len(self.canvas.palette),
+            self.hollow, self.fastPreview, self.baseMargin, self.tubeMargin, self.wallThickness, self.bulgeSize,
+        )
