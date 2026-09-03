@@ -1,4 +1,6 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter, QStackedLayout, QFrame,
+)
 from PySide6.QtCore import Qt
 
 from .base import Theme
@@ -8,7 +10,7 @@ from .toolRail import ToolRail
 from .paletteRail import PaletteRail
 from .meshSettingsPanel import MeshSettingsPanel
 from .statusBar import StatusBar
-from .elements import TabBar
+from .elements import TabBar, ViewModeTabs
 
 # A plain, literal black for every chrome outline (tool rail, tool options
 # bar, right pane) - not theme.ink (a warm near-black used elsewhere for
@@ -20,11 +22,20 @@ OUTLINE_COLOR = "#000000"
 class AppWindow(QMainWindow):
     """Assembles every top-level piece (menu bar, tab strip, tool options
     bar, tool rail, palette rail, mesh settings, status bar) around an
-    AppController and keeps them all in sync with it. The 2D canvas view
-    and 3D mesh view (canvasElement.py/meshElement.py) are built
-    separately and slotted in via setCanvasArea/setMeshElement (see
-    main.py) rather than constructed here directly, so this class doesn't
-    import Qt-OpenGL machinery it doesn't otherwise need.
+    AppController and keeps them all in sync with it. The color canvas,
+    layer canvas, and 3D mesh view (canvasElement.py/meshElement.py) are
+    built separately and slotted in via setCanvasArea/setLayerCanvasArea/
+    setMeshElement (see main.py) rather than constructed here directly,
+    so this class doesn't import Qt-OpenGL machinery it doesn't
+    otherwise need.
+
+    The work area is a QStackedLayout of two pages - "2D" (the color
+    canvas and layer canvas side by side) and "3D" (the mesh view) -
+    switched by a ViewModeTabs floating in its top-left corner, not laid
+    out beside it: it's parented directly onto the stack's container and
+    raised above it, at a fixed top-left offset that never needs
+    repositioning on resize (unlike CanvasArea's own top-right fit
+    button, whose position depends on the pane's width).
 
     ProjectController has no dedicated "dirty changed" or "undo state
     changed" signal (see ARCHITECTURE.md - isDirty/canUndo/canRedo are
@@ -92,29 +103,62 @@ class AppWindow(QMainWindow):
         )
         body.addWidget(self._toolRail)
 
-        # Only the right pane is a QSplitter (with the canvas/mesh area as
-        # its other pane) so it alone can be dragged wider/narrower.
+        # Only the right pane is a QSplitter (with the work area as its
+        # other pane) so it alone can be dragged wider/narrower.
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(4)
         splitter.setChildrenCollapsible(False)
 
         centerWidget = QWidget()
-        centerLayout = QHBoxLayout(centerWidget)
-        centerLayout.setContentsMargins(0, 0, 0, 0)
-        centerLayout.setSpacing(0)
+        self._centerStack = QStackedLayout(centerWidget)
+        self._centerStack.setContentsMargins(0, 0, 0, 0)
 
-        # Filled in by setCanvasArea/setMeshElement once those views exist.
+        # -- page 0, "2D": color canvas | layer canvas -------------------
+        canvasPage = QWidget()
+        canvasPageLayout = QHBoxLayout(canvasPage)
+        canvasPageLayout.setContentsMargins(0, 0, 0, 0)
+        canvasPageLayout.setSpacing(0)
+
+        # Filled in by setCanvasArea/setLayerCanvasArea once those views
+        # exist.
         self._canvasSlot = QWidget()
         self._canvasSlotLayout = QVBoxLayout(self._canvasSlot)
         self._canvasSlotLayout.setContentsMargins(0, 0, 0, 0)
-        centerLayout.addWidget(self._canvasSlot, 1)
+        canvasPageLayout.addWidget(self._canvasSlot, 1)
         self.canvasArea = None
 
+        divider = QFrame()
+        divider.setFixedWidth(2)
+        divider.setStyleSheet(f"background: {OUTLINE_COLOR};")
+        canvasPageLayout.addWidget(divider)
+
+        self._layerCanvasSlot = QWidget()
+        self._layerCanvasSlotLayout = QVBoxLayout(self._layerCanvasSlot)
+        self._layerCanvasSlotLayout.setContentsMargins(0, 0, 0, 0)
+        canvasPageLayout.addWidget(self._layerCanvasSlot, 1)
+        self.layerCanvasArea = None
+
+        self._centerStack.addWidget(canvasPage)
+
+        # -- page 1, "3D": mesh view --------------------------------------
+        meshPage = QWidget()
+        meshPageLayout = QVBoxLayout(meshPage)
+        meshPageLayout.setContentsMargins(0, 0, 0, 0)
+
+        # Filled in by setMeshElement once that view exists.
         self._meshSlot = QWidget()
         self._meshSlotLayout = QVBoxLayout(self._meshSlot)
         self._meshSlotLayout.setContentsMargins(0, 0, 0, 0)
-        centerLayout.addWidget(self._meshSlot, 1)
+        meshPageLayout.addWidget(self._meshSlot)
         self.meshElement = None
+
+        self._centerStack.addWidget(meshPage)
+
+        self._viewModeTabs = ViewModeTabs(
+            modes=("2D", "3D"), active="2D", onChange=self._setViewMode, theme=self.theme, parent=centerWidget,
+        )
+        self._viewModeTabs.move(10, 10)
+        self._viewModeTabs.raise_()
 
         splitter.addWidget(centerWidget)
 
@@ -178,18 +222,41 @@ class AppWindow(QMainWindow):
         if hasattr(widget, "zoomChanged"):
             widget.zoomChanged.connect(self._onZoomChanged)
         if hasattr(widget, "resetView"):
-            self._menuBar.viewMenu().addAction("Zoom to Fit", widget.resetView)
+            self._menuBar.viewMenu().addAction("Zoom to Fit", self._resetCanvasViews)
         if self._appController.activeController is not None and hasattr(widget, "bindProject"):
             widget.bindProject(self._appController.activeController)
 
     def _onZoomChanged(self, percent):
         self._statusBar.refresh(self._appController.activeController, zoomPercent=percent)
 
+    def setLayerCanvasArea(self, widget):
+        self._layerCanvasSlotLayout.addWidget(widget)
+        self.layerCanvasArea = widget
+        artist = getattr(widget, "artist", None)
+        if artist is not None and hasattr(artist, "setShowLabels"):
+            action = self._menuBar.viewMenu().addAction("Show Layer Numbers")
+            action.setCheckable(True)
+            action.setChecked(artist.showLabels)
+            action.toggled.connect(artist.setShowLabels)
+        if self._appController.activeController is not None and hasattr(widget, "bindProject"):
+            widget.bindProject(self._appController.activeController)
+
+    def _resetCanvasViews(self):
+        # One "Zoom to Fit" action resets both 2D panes together (see
+        # setCanvasArea) - they share one page and one project, so
+        # there's no reading in which only one should snap back.
+        for widget in (self.canvasArea, self.layerCanvasArea):
+            if widget is not None and hasattr(widget, "resetView"):
+                widget.resetView()
+
     def setMeshElement(self, widget):
         self._meshSlotLayout.addWidget(widget)
         self.meshElement = widget
         if self._appController.activeController is not None and hasattr(widget, "bindProject"):
             widget.bindProject(self._appController.activeController)
+
+    def _setViewMode(self, mode):
+        self._centerStack.setCurrentIndex(0 if mode == "2D" else 1)
 
     def setExportHandler(self, handler):
         """`handler` is called with no arguments when File > Export is
@@ -246,6 +313,8 @@ class AppWindow(QMainWindow):
         self._meshSettingsPanel.bindProject(controller)
         if self.canvasArea is not None and hasattr(self.canvasArea, "bindProject"):
             self.canvasArea.bindProject(controller)
+        if self.layerCanvasArea is not None and hasattr(self.layerCanvasArea, "bindProject"):
+            self.layerCanvasArea.bindProject(controller)
         if self.meshElement is not None and hasattr(self.meshElement, "bindProject"):
             self.meshElement.bindProject(controller)
         self._statusBar.refresh(controller, zoomPercent=self._currentZoomPercent())

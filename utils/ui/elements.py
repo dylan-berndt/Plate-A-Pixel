@@ -407,6 +407,81 @@ class PaletteRow(QWidget):
         self._nameEdit.setText(name)
 
 
+class ViewModeTabs(QWidget):
+    """The small "2D"/"3D" switcher pinned to the work area's top-left
+    corner (see AppWindow), floating on top of the canvas/mesh panes
+    rather than laid out beside them - the caller parents this to the
+    work area and positions/raises it, this class just renders and
+    reports clicks. Squared tops with rounded bottoms (via QSS's
+    per-corner border-radius) are what visually mark this as a floating
+    overlay chip rather than another row of the rectangular project
+    TabBar above it.
+
+    Not built on Tab/TabBar: those are one-per-open-project (dirty dot,
+    close button, unbounded count) - this is a fixed two-entry mode
+    switch with a different shape, so reusing them would mean stripping
+    more than it'd share."""
+
+    def __init__(self, modes=("2D", "3D"), active=None, onChange=None, theme: Theme = None, **kwargs):
+        super().__init__(**kwargs)
+        theme = theme or Theme()
+        self._theme = theme
+        self._onChange = onChange
+        self._active = active if active is not None else modes[0]
+
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        # Plain (non-checkable) buttons, not a QButtonGroup of checkables -
+        # a checkable button toggles itself off on a second click, which
+        # would let the user click the active tab into an unselected
+        # state; restyling by hand on every click sidesteps that instead
+        # of fighting Qt's default toggle behavior.
+        self._buttons = {}
+        for mode in modes:
+            button = QPushButton(mode)
+            button.setFixedSize(44, 26)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda checked=False, m=mode: self._select(m))
+            layout.addWidget(button)
+            self._buttons[mode] = button
+
+        self._applyStyles()
+
+    def _applyStyles(self):
+        theme = self._theme
+        for mode, button in self._buttons.items():
+            active = mode == self._active
+            bg = theme.paper if active else theme.clay800
+            fg = theme.ink if active else theme.paper
+            hoverBg = theme.paper if active else theme.clay600
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background: {bg}; color: {fg};
+                    border: 1.5px solid {theme.ink};
+                    border-top-left-radius: 0px; border-top-right-radius: 0px;
+                    border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
+                    font-size: 10.5px; font-weight: 700;
+                }}
+                QPushButton:hover {{ background: {hoverBg}; }}
+            """)
+
+    def _select(self, mode):
+        if mode != self._active:
+            self._active = mode
+            self._applyStyles()
+            if self._onChange is not None:
+                self._onChange(mode)
+
+    def setActive(self, mode):
+        if mode in self._buttons and mode != self._active:
+            self._active = mode
+            self._applyStyles()
+
+
 DIRTY_MARK = "●"  # BLACK CIRCLE - the unsaved-changes dot next to a tab's project name
 
 

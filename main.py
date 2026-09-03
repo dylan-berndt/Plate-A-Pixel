@@ -21,6 +21,7 @@ def main():
     appController = AppController()
     window = AppWindow(appController)
     window.setCanvasArea(CanvasArea(appController, theme=window.theme))
+    window.setLayerCanvasArea(CanvasArea(appController, theme=window.theme, artistClass=LayerCanvasArtist))
     window.setMeshElement(MeshElement(theme=window.theme))
 
     def openExportDialog():

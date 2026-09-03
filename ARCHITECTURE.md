@@ -278,8 +278,11 @@ concern, not domain state).
 - **`utils/ui/elements.py`** — the shared widget primitives everything
   else is built from (`Text`/`SectionLabel`/`MonoText`, `Button`/
   `IconButton`/`PillToggle`, `Slider`/`Stepper`/`Dropdown`/
-  `SegmentedControl`, `PaletteRow`, `Tab`/`TabBar`, plus
-  `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
+  `SegmentedControl`, `PaletteRow`, `Tab`/`TabBar`, `ViewModeTabs` (the
+  floating 2D/3D switcher pinned to the work area's corner - squared
+  tops, rounded bottoms; not built on `Tab`/`TabBar` since it's a fixed
+  two-entry mode switch with a different shape, not a per-project tab),
+  plus `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
   live widget generically, so a new tool option never needs hand-written
   UI). No project- or controller-specific logic lives here.
 - **`utils/ui/menuBar.py`, `toolRail.py`, `toolOptionsBar.py`,
@@ -294,16 +297,40 @@ concern, not domain state).
 - **`utils/ui/appWindow.py`** — `AppWindow`: assembles all of the above
   around an `AppController`, plus a tab strip driving
   `AppController.newProjectFromImage`/`setActiveProject`/`closeProject`.
-  `setCanvasArea`/`setMeshElement` slot in the 2D/3D views below (kept as
-  a separate seam so `AppWindow` doesn't import Qt-OpenGL machinery it
-  doesn't otherwise need); `setExportHandler` wires in whatever opens
-  `ExportDialog`. `main.py` is what actually calls all three.
-- **`canvasElement.py`** — the 2D view: `CanvasArtist` (paints
+  `setCanvasArea`/`setLayerCanvasArea`/`setMeshElement` slot in the
+  color/layer/mesh views below (kept as a separate seam so `AppWindow`
+  doesn't import Qt-OpenGL machinery it doesn't otherwise need);
+  `setExportHandler` wires in whatever opens `ExportDialog`. `main.py` is
+  what actually calls all four.
+
+  The work area itself is a `QStackedLayout` of two pages - "2D" (the
+  color canvas and layer canvas side by side, divided by a plain
+  outline) and "3D" (the mesh view) - switched by a small `ViewModeTabs`
+  (`elements.py`) floating over its top-left corner rather than laid out
+  beside it, at a fixed offset that never needs repositioning on resize.
+  `setLayerCanvasArea` also adds "Show Layer Numbers" to the View menu
+  when the layer canvas's artist exposes `setShowLabels`
+  (`LayerCanvasArtist`, see below); `setCanvasArea`'s own "Zoom to Fit"
+  action resets both 2D panes together (`_resetCanvasViews`) since they
+  share one page and one project.
+- **`canvasElement.py`** — the 2D views: `CanvasArtist` (paints
   `canvas.map` through `canvas.palette.colors`, the selection overlay and
   its marching-ants outline, and owns pan/zoom) and `CanvasArea` (routes
   mouse events to `ToolController.press`/`drag`/`release`, and handles
   middle-drag pan / wheel zoom directly since those are view navigation,
-  not an edit).
+  not an edit). `LayerCanvasArtist(CanvasArtist)` is the layer view - same
+  class, same `CanvasArea` shell (passed as `artistClass=LayerCanvasArtist`
+  rather than a second near-duplicate widget), but `_paintImage` renders
+  `canvas.layers` as grayscale (darker = lower height; a flat, out-of-
+  range tone for cells with `layers < 1` - unassigned, same test
+  `pixelPlan.py`'s `PixelPlan.empty` uses - so they read as "no height"
+  rather than a real low one) instead of `canvas.map`/the palette, and
+  `_paintOverlay` (a hook `CanvasArtist.paintEvent` calls after the
+  selection overlay, a no-op on the base class) draws each cell's height
+  as text when `showLabels` is on and the cell is large enough to read.
+  Because only the fill differs, the same Wand/Brush tools select
+  identically on both panes - selection is canvas-wide state, not
+  per-view.
 - **`meshElement.py`** — the 3D print preview: `MeshElement`, a
   `QOpenGLWidget` doing one flat-shaded draw call per palette color (plus
   the base plate) straight off `Project.mesh.meshes`, with simple

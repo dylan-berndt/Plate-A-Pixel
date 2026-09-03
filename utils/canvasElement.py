@@ -184,9 +184,16 @@ class CanvasArtist(QWidget):
             if cell > 0:
                 self._paintImage(painter, canvas, cell, origin)
                 self._paintSelectionOverlay(painter, canvas, cell, origin)
+                self._paintOverlay(painter, canvas, cell, origin)
         else:
             self._paintEmptyState(painter)
         painter.end()
+
+    def _paintOverlay(self, painter: QPainter, canvas, cell, origin):
+        """Hook for a subclass to draw extra per-cell content above the
+        selection overlay - a no-op here; see LayerCanvasArtist's height
+        labels below for the one thing that currently uses it."""
+        pass
 
     def _paintEmptyState(self, painter: QPainter):
         theme = self._theme
@@ -318,6 +325,89 @@ class CanvasArtist(QWidget):
         return runs
 
 
+class LayerCanvasArtist(CanvasArtist):
+    """Renders canvas.layers instead of canvas.map/palette: a grayscale
+    read of which height each pixel is assigned to (darker = lower,
+    lighter = higher). A pixel with no height assigned yet (layers < 1 -
+    the same "empty" test pixelPlan.py's own PixelPlan.empty uses) gets a
+    flat, out-of-range tone instead of being read as a real low height.
+    Height numbers are drawn on top when showLabels is on (see the View
+    menu's "Show Layer Numbers" toggle in appWindow.py), skipped below a
+    cell size where text would just be unreadable clutter.
+
+    Only what a pixel is filled with differs from CanvasArtist - the
+    selection overlay/marching ants and all mouse routing (CanvasArea,
+    below) are inherited unchanged, so the same Wand/Brush tools that
+    select on the color canvas select identically here."""
+
+    LOW_GRAY = 60
+    HIGH_GRAY = 255
+    UNASSIGNED_GRAY = 235
+    MIN_LABEL_CELL = 14
+
+    def __init__(self, theme: Theme = None, **kwargs):
+        super().__init__(theme=theme, **kwargs)
+        self.showLabels = False
+        self._layerRange = None
+
+    def setShowLabels(self, show: bool):
+        self.showLabels = bool(show)
+        self.update()
+
+    @staticmethod
+    def _hexToRgb(hexColor):
+        return tuple(int(hexColor[i:i + 2], 16) for i in (1, 3, 5))
+
+    def _heightGray(self, value, lo, hi):
+        if hi == lo:
+            return self.UNASSIGNED_GRAY
+        return int(self.LOW_GRAY + (value - lo) * (self.HIGH_GRAY - self.LOW_GRAY) / (hi - lo))
+
+    def _paintImage(self, painter: QPainter, canvas, cell, origin):
+        rows, cols = canvas.layers.shape
+        layers = canvas.layers
+        assigned = layers >= 1
+
+        rgb = np.empty((rows, cols, 3), dtype=np.uint8)
+        rgb[..., 0], rgb[..., 1], rgb[..., 2] = self._hexToRgb(self._theme.clay300)
+
+        self._layerRange = None
+        if assigned.any():
+            vals = layers[assigned]
+            lo, hi = int(vals.min()), int(vals.max())
+            self._layerRange = (lo, hi)
+            span = hi - lo
+            gray = (
+                np.full_like(vals, self.UNASSIGNED_GRAY, dtype=np.uint8) if span == 0 else
+                (self.LOW_GRAY + (vals - lo) * ((self.HIGH_GRAY - self.LOW_GRAY) / span)).astype(np.uint8)
+            )
+            for channel in range(3):
+                rgb[..., channel][assigned] = gray
+
+        self._imageBuffer = rgb  # keep alive - QImage doesn't copy the buffer it wraps
+        image = QImage(rgb.data, cols, rows, rgb.strides[0], QImage.Format_RGB888)
+        target = QRectF(origin.x(), origin.y(), cell * cols, cell * rows)
+        painter.drawImage(target, image)
+
+    def _paintOverlay(self, painter: QPainter, canvas, cell, origin):
+        if not self.showLabels or cell < self.MIN_LABEL_CELL or self._layerRange is None:
+            return
+        lo, hi = self._layerRange
+        layers = canvas.layers
+        ys, xs = np.nonzero(layers >= 1)
+
+        font = painter.font()
+        font.setPointSizeF(max(6.0, min(11.0, cell * 0.4)))
+        painter.setFont(font)
+
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            value = int(layers[y, x])
+            gray = self._heightGray(value, lo, hi)
+            painter.setPen(QColor("#101010" if gray > 140 else "#f5f0ea"))
+            rect = QRectF(origin.x() + x * cell, origin.y() + y * cell, cell, cell)
+            painter.drawText(rect, Qt.AlignCenter, str(value))
+
+
 class CanvasArea(QWidget):
     """The interactive 2D canvas panel. Turns mouse events into canvas
     positions and routes them to ToolController.press/drag/release - tool
@@ -325,18 +415,24 @@ class CanvasArea(QWidget):
     utils/controllers/toolController.py), not here. Middle-mouse drag
     pans and the wheel zooms; both are handled directly against the
     artist rather than going through a tool, since they're view
-    navigation, not an edit."""
+    navigation, not an edit.
+
+    `artistClass` swaps in LayerCanvasArtist (above) for the layer view
+    slotted into AppWindow.setLayerCanvasArea - everything else here
+    (mouse routing, pan/zoom, the fit button) is identical between the
+    color and layer panes, so this is the one seam rather than a second
+    near-duplicate widget class."""
 
     zoomChanged = Signal(float)
 
-    def __init__(self, appController, theme: Theme = None, **kwargs):
+    def __init__(self, appController, theme: Theme = None, artistClass=CanvasArtist, **kwargs):
         super().__init__(**kwargs)
         self._appController = appController
         self._theme = theme or Theme()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.artist = CanvasArtist(theme=self._theme)
+        self.artist = artistClass(theme=self._theme)
         layout.addWidget(self.artist)
 
         self._fitButton = IconButton(Icons.EXPAND, onClick=self.resetView, size=26, theme=self._theme, parent=self)
