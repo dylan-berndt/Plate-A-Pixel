@@ -57,16 +57,13 @@ def _rawEdges(covered):
     """Boundary edges of `covered` (a 2D bool array) at native resolution,
     found via array-shift transitions rather than visiting every cell -
     cost is proportional to perimeter, not area."""
-    rows, cols = covered.shape
-    above = np.vstack([np.zeros((1, cols), dtype=bool), covered])
-    below = np.vstack([covered, np.zeros((1, cols), dtype=bool)])
-    diffH = below.astype(np.int8) - above.astype(np.int8)
+    # bool -> int8 once and reused, rather than once per shifted copy.
+    coveredInt = covered.astype(np.int8)
+    diffH = np.pad(coveredInt, ((0, 1), (0, 0))) - np.pad(coveredInt, ((1, 0), (0, 0)))
     nH, nC = np.nonzero(diffH == 1)
     sH, sC = np.nonzero(diffH == -1)
 
-    left = np.hstack([np.zeros((rows, 1), dtype=bool), covered])
-    right = np.hstack([covered, np.zeros((rows, 1), dtype=bool)])
-    diffV = right.astype(np.int8) - left.astype(np.int8)
+    diffV = np.pad(coveredInt, ((0, 0), (0, 1))) - np.pad(coveredInt, ((0, 0), (1, 0)))
     wR, wV = np.nonzero(diffV == 1)
     eR, eV = np.nonzero(diffV == -1)
 
@@ -737,14 +734,151 @@ def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL
 # Fast path for interactive preview only (Mesh.fastPreview) - never used for
 # export. Trades away the guarantee componentTriangles above gives (every
 # edge shared by exactly two triangles, i.e. a real printable solid) for
-# speed: flat faces are tiled straight from the same fine coverage grid
-# _capCoverageFine/_tubeCoverageFine already build (no ear-clip), and walls
-# are one quad per raw boundary edge (no loop-joining). Merging same-covered
-# cells into bigger tiles can leave two adjacent tiles sharing only part of
-# an edge (a T-junction) - invisible to a renderer, since both sides still
-# meet at the same coordinates, but not a valid manifold, which is exactly
-# why this never feeds export or a slicer.
+# speed: flat faces are tiled directly (no ear-clip) and walls are one quad
+# per merged boundary run (no CSG anywhere). Merging same-covered cells into
+# bigger tiles can leave two adjacent tiles sharing only part of an edge (a
+# T-junction) - invisible to a renderer, since both sides still meet at the
+# same coordinates, but not a valid manifold, which is exactly why this
+# never feeds export or a slicer.
+#
+# _fastCapCoverage/_fastTubeCoverage are leaner cousins of
+# _capCoverageFine/_tubeCoverageFine (profiling found those the single
+# biggest cost here): those unconditionally add a bulge/margin cut line for
+# *every* pixel, and the cap version does neighbor lookups for corner
+# filling, since they exist for production's rare pinch-point fallback,
+# where correctness matters more than speed. Bulge/inset only ever affects
+# a small fraction of pixels in typical content, so only adding a cut line
+# where a pixel's own side actually needs one keeps the coverage grid close
+# to native resolution instead of uniformly finer everywhere. The trade:
+# a pixel whose *neighbor's* bulge would otherwise fill in its corner (not
+# its own bulge) doesn't get that fill here - a further, already-accepted-
+# in-kind small gap, on top of the T-junctions this path already allows.
 # ---------------------------------------------------------------------------
+
+def _nativeCoverage(planByPos):
+    """Plain native-resolution coverage grid, no coordinate compression -
+    for the common case (most groups, since bulge/inset only ever affects
+    pixels touching a real boundary) where nothing needs finer-than-a-
+    pixel resolution at all."""
+    ys = [p.y for p in planByPos.values()]
+    xs = [p.x for p in planByPos.values()]
+    minY, minX = min(ys), min(xs)
+    rows, cols = max(ys) - minY + 1, max(xs) - minX + 1
+    covered = np.zeros((rows, cols), dtype=bool)
+    for (y, x) in planByPos:
+        covered[y - minY, x - minX] = True
+    xArr = np.arange(minX, minX + cols + 1, dtype=float)
+    zArr = np.arange(minY, minY + rows + 1, dtype=float)
+    return covered, xArr, zArr
+
+
+def _fastCapCoverage(planByPos, bulgeSize):
+    if not any(p.bulged for p in planByPos.values()):
+        return _nativeCoverage(planByPos)
+
+    xsSet, zsSet = set(), set()
+    for (y, x) in planByPos:
+        xsSet.add(x); xsSet.add(x + 1)
+        zsSet.add(y); zsSet.add(y + 1)
+    for (y, x), plan in planByPos.items():
+        bulged = plan.bulged
+        if Face.WEST in bulged: xsSet.add(x - bulgeSize)
+        if Face.EAST in bulged: xsSet.add(x + 1 + bulgeSize)
+        if Face.NORTH in bulged: zsSet.add(y - bulgeSize)
+        if Face.SOUTH in bulged: zsSet.add(y + 1 + bulgeSize)
+
+    xArr, zArr = np.array(sorted(xsSet)), np.array(sorted(zsSet))
+    covered = np.zeros((len(zArr) - 1, len(xArr) - 1), dtype=bool)
+
+    positions = list(planByPos.keys())
+    ysArr = np.array([p[0] for p in positions], dtype=float)
+    xsArr = np.array([p[1] for p in positions], dtype=float)
+    cx0 = np.searchsorted(xArr, xsArr).tolist()
+    cx1 = np.searchsorted(xArr, xsArr + 1).tolist()
+    cz0 = np.searchsorted(zArr, ysArr).tolist()
+    cz1 = np.searchsorted(zArr, ysArr + 1).tolist()
+
+    for i, (y, x) in enumerate(positions):
+        covered[cz0[i]:cz1[i], cx0[i]:cx1[i]] = True
+
+    for i, (y, x) in enumerate(positions):
+        plan = planByPos[(y, x)]
+        if not plan.bulged:
+            continue
+        cx0i, cx1i, cz0i, cz1i = cx0[i], cx1[i], cz0[i], cz1[i]
+        bulged = plan.bulged
+        west, east = Face.WEST in bulged, Face.EAST in bulged
+        north, south = Face.NORTH in bulged, Face.SOUTH in bulged
+        wx0i = int(np.searchsorted(xArr, x - bulgeSize)) if west else None
+        ex1i = int(np.searchsorted(xArr, x + 1 + bulgeSize)) if east else None
+        nz0i = int(np.searchsorted(zArr, y - bulgeSize)) if north else None
+        sz1i = int(np.searchsorted(zArr, y + 1 + bulgeSize)) if south else None
+        if west: covered[cz0i:cz1i, wx0i:cx0i] = True
+        if east: covered[cz0i:cz1i, cx1i:ex1i] = True
+        if north: covered[nz0i:cz0i, cx0i:cx1i] = True
+        if south: covered[cz1i:sz1i, cx0i:cx1i] = True
+        # This pixel's own two-adjacent-bulged-sides corner - the common
+        # case that needs one - filled directly since west/east/north/
+        # south are already known here; a corner triggered only by a
+        # neighbor's bulge is the accepted gap described above.
+        if west and north: covered[nz0i:cz0i, wx0i:cx0i] = True
+        if east and north: covered[nz0i:cz0i, cx1i:ex1i] = True
+        if west and south: covered[cz1i:sz1i, wx0i:cx0i] = True
+        if east and south: covered[cz1i:sz1i, cx1i:ex1i] = True
+
+    return covered, xArr, zArr
+
+
+def _fastTubeCoverage(planByPos, tubeMargin):
+    if all(len(p.flushTubeSides) == 4 for p in planByPos.values()):
+        return _nativeCoverage(planByPos)
+
+    xsSet, zsSet = set(), set()
+    for (y, x) in planByPos:
+        xsSet.add(x); xsSet.add(x + 1)
+        zsSet.add(y); zsSet.add(y + 1)
+    for (y, x), plan in planByPos.items():
+        flush = plan.flushTubeSides
+        if Face.WEST not in flush: xsSet.add(x + tubeMargin)
+        if Face.EAST not in flush: xsSet.add(x + 1 - tubeMargin)
+        if Face.NORTH not in flush: zsSet.add(y + tubeMargin)
+        if Face.SOUTH not in flush: zsSet.add(y + 1 - tubeMargin)
+
+    xArr, zArr = np.array(sorted(xsSet)), np.array(sorted(zsSet))
+    covered = np.zeros((len(zArr) - 1, len(xArr) - 1), dtype=bool)
+
+    positions = list(planByPos.keys())
+    ysArr = np.array([p[0] for p in positions], dtype=float)
+    xsArr = np.array([p[1] for p in positions], dtype=float)
+    cx0 = np.searchsorted(xArr, xsArr).tolist()
+    cx1 = np.searchsorted(xArr, xsArr + 1).tolist()
+    cz0 = np.searchsorted(zArr, ysArr).tolist()
+    cz1 = np.searchsorted(zArr, ysArr + 1).tolist()
+
+    for i, (y, x) in enumerate(positions):
+        plan = planByPos[(y, x)]
+        flush = plan.flushTubeSides
+        cx0i, cx1i, cz0i, cz1i = cx0[i], cx1[i], cz0[i], cz1[i]
+        west, east = Face.WEST in flush, Face.EAST in flush
+        north, south = Face.NORTH in flush, Face.SOUTH in flush
+
+        cxIn0i = cx0i if west else int(np.searchsorted(xArr, x + tubeMargin))
+        cxIn1i = cx1i if east else int(np.searchsorted(xArr, x + 1 - tubeMargin))
+        czIn0i = cz0i if north else int(np.searchsorted(zArr, y + tubeMargin))
+        czIn1i = cz1i if south else int(np.searchsorted(zArr, y + 1 - tubeMargin))
+
+        covered[czIn0i:czIn1i, cxIn0i:cxIn1i] = True
+        if west: covered[czIn0i:czIn1i, cx0i:cxIn0i] = True
+        if east: covered[czIn0i:czIn1i, cxIn1i:cx1i] = True
+        if north: covered[cz0i:czIn0i, cxIn0i:cxIn1i] = True
+        if south: covered[czIn1i:cz1i, cxIn0i:cxIn1i] = True
+        if west and north: covered[cz0i:czIn0i, cx0i:cxIn0i] = True
+        if east and north: covered[cz0i:czIn0i, cxIn1i:cx1i] = True
+        if west and south: covered[czIn1i:cz1i, cx0i:cxIn0i] = True
+        if east and south: covered[czIn1i:cz1i, cxIn1i:cx1i] = True
+
+    return covered, xArr, zArr
+
 
 def _singlePassTiles(mask):
     """One-pass, non-minimal tiling: expand each True run right, then as
@@ -814,21 +948,29 @@ def _mergedBoundaryRuns(covered):
 def _fastSolidFromCoverage(covered, xEdges, zEdges, yBottom, yTop):
     """Top + bottom (tiled, not ear-clipped) + walls (one quad per merged
     boundary run) for one coverage grid."""
+    # .tolist() once: repeatedly indexing the numpy arrays boxes/unboxes a
+    # numpy scalar (then float()) on every single vertex access, plain
+    # Python list indexing doesn't.
+    xEdges, zEdges = xEdges.tolist(), zEdges.tolist()
     triangles = []
 
     for (r0, c0, r1, c1) in _singlePassTiles(covered):
-        x0, x1 = float(xEdges[c0]), float(xEdges[c1])
-        z0, z1 = float(zEdges[r0]), float(zEdges[r1])
-        triangles += [Vector3(x0, yTop, z0), Vector3(x1, yTop, z1), Vector3(x1, yTop, z0)]
-        triangles += [Vector3(x0, yTop, z0), Vector3(x0, yTop, z1), Vector3(x1, yTop, z1)]
-        triangles += [Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z0), Vector3(x1, yBottom, z1)]
-        triangles += [Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z1), Vector3(x0, yBottom, z1)]
+        x0, x1 = xEdges[c0], xEdges[c1]
+        z0, z1 = zEdges[r0], zEdges[r1]
+        triangles.extend((
+            Vector3(x0, yTop, z0), Vector3(x1, yTop, z1), Vector3(x1, yTop, z0),
+            Vector3(x0, yTop, z0), Vector3(x0, yTop, z1), Vector3(x1, yTop, z1),
+            Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z0), Vector3(x1, yBottom, z1),
+            Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z1), Vector3(x0, yBottom, z1),
+        ))
 
     for (ax, az), (bx, bz) in _mergedBoundaryRuns(covered):
-        xa, za = float(xEdges[ax]), float(zEdges[az])
-        xb, zb = float(xEdges[bx]), float(zEdges[bz])
-        triangles += [Vector3(xa, yBottom, za), Vector3(xb, yTop, zb), Vector3(xb, yBottom, zb)]
-        triangles += [Vector3(xa, yBottom, za), Vector3(xa, yTop, za), Vector3(xb, yTop, zb)]
+        xa, za = xEdges[ax], zEdges[az]
+        xb, zb = xEdges[bx], zEdges[bz]
+        triangles.extend((
+            Vector3(xa, yBottom, za), Vector3(xb, yTop, zb), Vector3(xb, yBottom, zb),
+            Vector3(xa, yBottom, za), Vector3(xa, yTop, za), Vector3(xb, yTop, zb),
+        ))
 
     return triangles
 
@@ -840,11 +982,11 @@ def componentTrianglesFast(plans, tubeMargin=TUBE_MARGIN, bulgeSize=BULGE_SIZE):
     height = next(iter(plans)).height
     planByPos = {(p.y, p.x): p for p in plans}
 
-    covered, xEdges, zEdges = _capCoverageFine(planByPos, bulgeSize)
+    covered, xEdges, zEdges = _fastCapCoverage(planByPos, bulgeSize)
     capTris = _fastSolidFromCoverage(covered, xEdges, zEdges, height - 1.0, float(height))
     if height <= 1:
         return capTris
 
-    tCovered, txEdges, tzEdges = _tubeCoverageFine(planByPos, tubeMargin)
+    tCovered, txEdges, tzEdges = _fastTubeCoverage(planByPos, tubeMargin)
     tubeTris = _fastSolidFromCoverage(tCovered, txEdges, tzEdges, 0.0, height - 1.0)
     return capTris + tubeTris
