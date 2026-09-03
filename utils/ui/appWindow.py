@@ -10,6 +10,7 @@ from .toolRail import ToolRail
 from .paletteRail import PaletteRail
 from .meshSettingsPanel import MeshSettingsPanel
 from .statusBar import StatusBar
+from .settingsWindow import SettingsWindow
 from .elements import TabBar, ViewModeTabs
 
 # A plain, literal black for every chrome outline (tool rail, tool options
@@ -55,12 +56,14 @@ class AppWindow(QMainWindow):
         self._appController = appController
         self.theme = theme or Theme()
         self._exportHandler = None
+        self._settingsWindow = None
 
         self.setWindowTitle("Plate-A-Pixel")
         self.setStyleSheet(self.theme.stylesheet())
 
         self._menuBar = MenuBar(appController, theme=self.theme)
         self._menuBar.exportRequested.connect(self._onExportRequested)
+        self._menuBar.settingsRequested.connect(self._onSettingsRequested)
         self.setMenuBar(self._menuBar)
 
         central = QWidget()
@@ -284,6 +287,21 @@ class AppWindow(QMainWindow):
     def _onExportRequested(self):
         if self._exportHandler is not None:
             self._exportHandler()
+
+    def _onSettingsRequested(self):
+        # Built lazily and kept around (not re-created per click, not
+        # exec()'d modally) so it behaves like a normal single settings
+        # window - closing and reopening it doesn't lose its place, and
+        # every edit inside it already commits immediately through
+        # KeymapController (see SettingsWindow), so there's no state here
+        # that closing would need to discard anyway.
+        if self._settingsWindow is None:
+            self._settingsWindow = SettingsWindow(
+                self._appController.keymapController, theme=self.theme, parent=self,
+            )
+        self._settingsWindow.show()
+        self._settingsWindow.raise_()
+        self._settingsWindow.activateWindow()
 
     # -- tab strip -----------------------------------------------------
 

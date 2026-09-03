@@ -143,6 +143,32 @@ def test_invalid_mode_raises():
         canvas.alterSelection(np.zeros((6, 6), dtype=bool), "nonsense")
 
 
+def test_select_all_selects_every_cell(canvas):
+    canvas.selectAll()
+
+    assert canvas.selection.all()
+
+
+def test_deselect_all_clears_every_cell(canvas):
+    canvas.bucketSelect((0, 0), mode="replace", contiguous=False)
+
+    canvas.deselectAll()
+
+    assert not canvas.selection.any()
+
+
+def test_invert_selection_flips_every_cell(canvas):
+    canvas.bucketSelect((0, 0), mode="replace", contiguous=True)
+    before = canvas.selection.copy()
+
+    canvas.invertSelection()
+
+    assert (canvas.selection == ~before).all()
+    for pos in RED_BLOCK:
+        assert not canvas.selection[pos]
+    assert canvas.selection[RED_ISLAND]
+
+
 def test_valid_neighbors_at_corner_respects_canvas_bounds(canvas):
     assert len(canvas.validNeighbors((0, 0), diagonal=False)) == 2
     assert len(canvas.validNeighbors((0, 0), diagonal=True)) == 3

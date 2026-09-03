@@ -98,6 +98,23 @@ when to redraw. It never calls into `utils/data/` directly.
   - `Project.exportObjs(dir)` writes one OBJ per mesh component, scaling
     X/Z by `cellWidth` and Y by `cellHeight` independently (`objExport.py`
     takes both explicitly — never one uniform scale).
+- **`Command`/`COMMANDS`/`Preferences`** (`preferences.py`) — user-level
+  (not per-project) settings, currently just keybinds. `Command(id,
+  label, default)` is one bindable action's static description - a Qt
+  key-sequence string for `default`, not `QKeySequence`, since this file
+  has the same no-Qt rule as the rest of `utils/data/`; `COMMANDS` is the
+  full list (`selectAll`/`deselectAll`/`invertSelection` today - adding a
+  bindable command means adding one `Command` here, then wiring its id to
+  a handler in `KeymapController`, below). `Preferences` round-trips a
+  single small JSON file (`Preferences.load`/`.save`, defaulting to
+  `~/.plate_a_pixel/preferences.json` but remembering whatever path it
+  was actually loaded from, so a bare `.save()` writes back to the same
+  place - also what lets tests point it at a tmp file and never touch a
+  real user's saved keybinds) holding `keybinds` (command id -> key
+  sequence string, or `""` for deliberately unbound) - always backfilled
+  with every `COMMANDS` entry's own default for anything a saved file
+  predates, so a command added in a later version doesn't need a
+  migration.
 
 ## Tool layer (`utils/tools/`)
 
@@ -238,7 +255,9 @@ created alongside every project.
 vs. Save As); signals `projectOpened` / `projectClosed` /
 `activeProjectChanged`. Also owns the single `ToolController` — the
 selected tool and its options persist across tabs, like a normal image
-editor, rather than resetting per project.
+editor, rather than resetting per project — and the single
+`KeymapController` (below), for the same reason: keybinds are a user-
+level setting, not a per-project one.
 
 ### `ToolController` — routes canvas interaction to the active tool
 
@@ -256,15 +275,40 @@ hands each handler that project's `canvasController` — not the
 the tool layer above). `useLayers` (set by `CanvasArea` depending on
 which pane sent the event) just rides along unchanged to the tool.
 
+### `KeymapController` — the user's keybinds, as live `QAction`s
+
+Owns `Preferences` (`utils/data/preferences.py`) and one `QAction` per
+`Command` in `COMMANDS` (`self.actions`, keyed by command id), built once
+in `__init__` and kept in sync with `Preferences` by `_applyShortcuts()`
+(called after every rebind). A `QAction` is the single source of truth
+for both "what shortcut fires this" and "what a menu shows next to this
+item's label" - `MenuBar`'s Edit menu just does
+`editMenu.addAction(keymapController.actions["selectAll"])` rather than
+building its own action with a copy of the same shortcut, so there's
+never a second registration of the same key press to go stale.
+
+`_HANDLERS` is a plain `{command id: lambda controller: ...}` dict - the
+one place a command id maps to real behavior. Each action's `triggered`
+resolves `AppController.activeController` at the moment it *fires* (same
+pattern as `ToolController.press`/tool dispatch — see above), not at
+bind time, so the same three actions keep working correctly across a tab
+switch; triggering with no project open is just a no-op.
+
+`setKeybind(commandId, sequence)` / `resetKeybind(commandId)` update
+`Preferences`, call `Preferences.save()` immediately (no separate "Apply"
+step - see `SettingsWindow`), refresh every action's shortcut, and emit
+`keybindsChanged`.
+
 ### `CanvasController` — the one place a view calls to edit a project
 
 Created one-per-project (`projectController.canvasController`), wrapping
 that `ProjectController` (not a bare `Project`) so every edit still goes
 through its undo stack and mesh pipeline. This is the actual command
 surface: everything a view (or a menu, or a palette panel) calls to
-change a project's content lives here, except selection (which lives
-directly on `WandTool`/`BrushSelectTool` - see the tool layer above for
-why a same-signature passthrough here would add nothing):
+change a project's content lives here, except *position-based* selection
+(which lives directly on `WandTool`/`BrushSelectTool` - see the tool
+layer above for why a same-signature passthrough here would add
+nothing):
 
 | method | via |
 |---|---|
@@ -274,12 +318,12 @@ why a same-signature passthrough here would add nothing):
 | `setTubeMargin(value)`, `setWallThickness(value)`, `setBulgeSize(value)` | `with projectController.editing(affectsMesh=True):` — these do change `Mesh`'s triangles (see `componentTriangles` in `pixelComponents.py`), unlike `cellWidth`/`cellHeight` below |
 | `setCellWidth(mm)`, `setCellHeight(mm)` | `with projectController.editing(signal=projectController.viewSettingsChanged):` — export-only scale, so `affectsMesh` doesn't apply here; these never touch `Mesh`'s own unit-based triangles |
 | `renameColor(index, name)`, `recolorColor(index, rgb)` | `with projectController.editing(signal=projectController.paletteChanged):` |
+| `selectAll()`, `deselectAll()`, `invertSelection()` | `with projectController.editing(signal=projectController.selectionChanged):` — whole-canvas selection ops with no click position at all, so not a `Tool`'s job either (see `FunctionalTool.onPress`); bound to keyboard shortcuts by `KeymapController`, not a canvas click |
 
 This is also the settled home for general canvas-view operations that
-don't fit the table above and aren't a `Tool`'s job either. The concrete
-example on the table is a future outline overlay for the 2D view; there
-may be others. Decide what goes here as those needs become concrete —
-don't invent methods speculatively.
+don't fit the table above and aren't a `Tool`'s job either. Decide what
+goes here as those needs become concrete — don't invent methods
+speculatively.
 
 ## Views (`utils/ui/`, `canvasElement.py`, `meshElement.py`, `exportDialog.py`)
 
@@ -305,14 +349,32 @@ concern, not domain state).
   live widget generically, so a new tool option never needs hand-written
   UI). No project- or controller-specific logic lives here.
 - **`utils/ui/menuBar.py`, `toolRail.py`, `toolOptionsBar.py`,
-  `paletteRail.py`, `meshSettingsPanel.py`, `statusBar.py`** — the
-  concrete panels `AppWindow` assembles: File/Edit/View menu
-  (`MenuBar`), tool selector (`ToolRail`), the active tool's own options
-  plus Undo/Redo (`ToolOptionsBar`), the palette list (`PaletteRail`),
-  the Solid/Hollow + margin + structural-geometry + export-scale card
-  (`MeshSettingsPanel`), and the bottom status strip (`StatusBar`). Each
-  binds to a `ProjectController` (`bindProject`) and redraws off its
-  signals; none of them touch `utils/data/` directly.
+  `paletteRail.py`, `meshSettingsPanel.py`, `statusBar.py`,
+  `settingsWindow.py`** — the concrete panels `AppWindow` assembles:
+  File/Edit/View menu (`MenuBar`), tool selector (`ToolRail`), the active
+  tool's own options plus Undo/Redo (`ToolOptionsBar`), the palette list
+  (`PaletteRail`), the Solid/Hollow + margin + structural-geometry +
+  export-scale card (`MeshSettingsPanel`), the bottom status strip
+  (`StatusBar`), and the Settings window (`SettingsWindow`, below). Each
+  of the first six binds to a `ProjectController` (`bindProject`) and
+  redraws off its signals; none of them touch `utils/data/` directly.
+  `MenuBar`'s Edit menu adds `KeymapController.actions["selectAll"]` /
+  `["deselectAll"]` / `["invertSelection"]` directly (not its own
+  actions with a copied shortcut - see `KeymapController` above for why
+  that matters) plus a "Settings..." entry that emits
+  `MenuBar.settingsRequested`, which `AppWindow` connects to open (and,
+  on repeat use, just re-raise) a single lazily-built `SettingsWindow`.
+
+  `SettingsWindow` is a plain `QTabWidget`-in-a-`QDialog` - Keybinds
+  (`KeybindsTab`) is the only tab that exists yet, but a future settings
+  category is just another `addTab()` call, not a restructure. Every
+  edit inside it commits immediately through `KeymapController` (one
+  `KeybindRow` per `Command`: a `QKeySequenceEdit` capped to a single
+  chord via `setMaximumSequenceLength(1)`, plus a Reset button back to
+  that command's default) - no Save/Cancel, since there's nothing
+  buffered locally to discard. Doesn't check for a rebind colliding with
+  another command's shortcut; a plausible follow-up, not attempted in
+  this first pass.
   `MeshSettingsPanel`'s numeric fields (margin, cell width/height,
   tube margin, wall thickness, bulge size) debounce their own
   `CanvasController` calls (`_debounce`/`DEBOUNCE_MS`, separate from

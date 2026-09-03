@@ -156,3 +156,41 @@ def test_recolor_color_undo_reverts(controller):
     controller.undo()
 
     assert controller.project.canvas.palette[index].color == RED
+
+
+def test_select_all_selects_every_cell_and_emits(controller):
+    calls = spy(controller.selectionChanged)
+
+    controller.canvasController.selectAll()
+
+    assert controller.project.canvas.selection.all()
+    assert len(calls) == 1
+
+
+def test_deselect_all_clears_the_selection_and_emits(controller):
+    controller.project.canvas.bucketSelect((0, 0), contiguous=False, mode="replace")  # setup, not under test
+    calls = spy(controller.selectionChanged)
+
+    controller.canvasController.deselectAll()
+
+    assert not controller.project.canvas.selection.any()
+    assert len(calls) == 1
+
+
+def test_invert_selection_flips_every_cell_and_emits(controller):
+    controller.project.canvas.bucketSelect((0, 0), contiguous=False, mode="replace")  # setup, not under test
+    before = controller.project.canvas.selection.copy()
+    calls = spy(controller.selectionChanged)
+
+    controller.canvasController.invertSelection()
+
+    assert (controller.project.canvas.selection == ~before).all()
+    assert len(calls) == 1
+
+
+def test_select_all_undo_reverts(controller):
+    controller.canvasController.selectAll()
+
+    controller.undo()
+
+    assert not controller.project.canvas.selection.any()

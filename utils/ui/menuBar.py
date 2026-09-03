@@ -17,9 +17,18 @@ class MenuBar(QMenuBar):
     after its color's layer name - an unnamed color would either collide
     with another unnamed one or produce a meaningless filename. Save
     blocks and tells the user which colors need naming rather than saving
-    something export can't cleanly use later."""
+    something export can't cleanly use later.
+
+    The Edit menu's Select All / Deselect All / Invert Selection entries
+    are AppController.keymapController's own QAction objects (see
+    KeymapController), not built here - adding the same action a menu
+    shows and a shortcut fires keeps both in sync automatically (the
+    label always reflects the current keybind), rather than this class
+    maintaining a second copy of "what shortcut does this" that could
+    drift from what KeymapController/SettingsWindow actually have bound."""
 
     exportRequested = Signal()
+    settingsRequested = Signal()
 
     def __init__(self, appController, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -68,6 +77,16 @@ class MenuBar(QMenuBar):
         self._redoAction = editMenu.addAction("Redo")
         self._redoAction.setShortcut(QKeySequence.Redo)
         self._redoAction.triggered.connect(self._redo)
+
+        editMenu.addSeparator()
+        keymapController = appController.keymapController
+        editMenu.addAction(keymapController.actions["selectAll"])
+        editMenu.addAction(keymapController.actions["deselectAll"])
+        editMenu.addAction(keymapController.actions["invertSelection"])
+
+        editMenu.addSeparator()
+        settingsAction = editMenu.addAction("Settings...")
+        settingsAction.triggered.connect(self.settingsRequested.emit)
 
         self._viewMenu = self.addMenu("View")
 

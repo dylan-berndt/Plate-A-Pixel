@@ -1,5 +1,13 @@
+import os
+
+# Headless by default (setdefault - never overrides a real display a
+# developer/CI already configured) - needed the moment any test touches
+# a real Qt GUI class (QAction, QWidget, ...), which KeymapController's
+# tests now do; must be set before QApplication is ever constructed.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 
 from utils.data.canvas import Canvas
@@ -51,8 +59,16 @@ def qt_app():
     hands its result back via a queued signal - that delivery only happens
     while a Qt event loop is being pumped, which requires an application
     instance to exist. Qt allows only one per process, so this is session-
-    scoped and shared by every test."""
-    app = QCoreApplication.instance() or QCoreApplication([])
+    scoped and shared by every test.
+
+    QApplication, not the lighter QCoreApplication this used to be: a
+    bare QCoreApplication never loads a QPA platform plugin at all (that
+    only happens for QGuiApplication and its subclasses), and constructing
+    a real GUI class - QAction, in KeymapController's tests - without one
+    loaded segfaults. QApplication is a superset of QCoreApplication, so
+    every other test's use of it (just needing an event loop for queued
+    signal delivery) is unaffected."""
+    app = QApplication.instance() or QApplication([])
     yield app
 
 
@@ -75,7 +91,7 @@ def waitForMeshWorker(controller, timeoutMs=5000, maxRounds=50):
             return
         if controller._meshWorker is not None:
             controller._meshWorker.wait(timeoutMs)
-            QCoreApplication.processEvents()
+            QApplication.processEvents()
         else:
             QTest.qWait(10)
     raise TimeoutError("Mesh worker did not finish in time")

@@ -4,4 +4,5 @@ from .paletteRail import *
 from .meshSettingsPanel import *
 from .menuBar import *
 from .statusBar import *
+from .settingsWindow import *
 from .appWindow import *

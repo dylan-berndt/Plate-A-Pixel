@@ -14,13 +14,18 @@ class CanvasController:
     (or, for selection, directly on a FunctionalTool), so there's exactly
     one place to look for "how do I change this project."
 
-    Selection (bucketSelect, brushSelect) isn't here - it lives directly
-    on WandTool/BrushSelectTool, which call Canvas's own bucketSelect/
-    brushSelect and wrap themselves in `with controller.projectController.
-    editing(signal=...):`. Those are real, independently-tested domain
-    methods on Canvas; putting a same-signature passthrough here on top
-    of them would just be a second copy of the same parameter list for no
-    benefit.
+    Position-based selection (bucketSelect, brushSelect) isn't here - it
+    lives directly on WandTool/BrushSelectTool, which call Canvas's own
+    bucketSelect/brushSelect and wrap themselves in `with controller.
+    projectController.editing(signal=...):`. Those are real,
+    independently-tested domain methods on Canvas; putting a same-
+    signature passthrough here on top of them would just be a second
+    copy of the same parameter list for no benefit. Whole-canvas
+    selection ops that aren't tied to any click position at all
+    (selectAll/deselectAll/invertSelection) aren't a Tool's job either
+    (see FunctionalTool.onPress - a Tool always acts at a `pos`), so
+    those live directly here instead, bound to keyboard shortcuts by
+    KeymapController rather than a canvas click.
 
     Wraps the owning ProjectController rather than a bare Project so every
     edit still goes through that ProjectController's undo stack and mesh
@@ -44,6 +49,20 @@ class CanvasController:
     def transformSelectionLayer(self, delta):
         with self.projectController.editing(affectsMesh=True):
             self.project.canvas.transformSelection(delta)
+
+    # -- whole-canvas selection --------------------------------------
+
+    def selectAll(self):
+        with self.projectController.editing(signal=self.projectController.selectionChanged):
+            self.project.canvas.selectAll()
+
+    def deselectAll(self):
+        with self.projectController.editing(signal=self.projectController.selectionChanged):
+            self.project.canvas.deselectAll()
+
+    def invertSelection(self):
+        with self.projectController.editing(signal=self.projectController.selectionChanged):
+            self.project.canvas.invertSelection()
 
     def setHollow(self, hollow):
         with self.projectController.editing(affectsMesh=True):

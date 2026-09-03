@@ -164,3 +164,12 @@ class Canvas:
 
     def transformSelection(self, direction=1):
         self.layers[self.selection] += direction
+
+    def selectAll(self):
+        self.selection = np.ones_like(self.map, dtype=np.bool)
+
+    def deselectAll(self):
+        self.selection = np.zeros_like(self.map, dtype=np.bool)
+
+    def invertSelection(self):
+        self.selection = np.logical_not(self.selection)
