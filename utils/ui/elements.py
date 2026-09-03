@@ -420,7 +420,23 @@ class ViewModeTabs(QWidget):
     Not built on Tab/TabBar: those are one-per-open-project (dirty dot,
     close button, unbounded count) - this is a fixed two-entry mode
     switch with a different shape, so reusing them would mean stripping
-    more than it'd share."""
+    more than it'd share.
+
+    Deliberately has no background/border of its own - only the buttons
+    are styled, so nothing shows here but their own squared-top/rounded-
+    bottom shapes floating directly over whatever pane is behind them.
+    (No WA_StyledBackground, and none should be added: setting that
+    attribute makes a plain QWidget start painting a background from the
+    app's stylesheet even with no per-instance stylesheet of its own -
+    see the identical note on Text.setStyleSheet - which is exactly the
+    unwanted opaque rectangle around the tabs this class used to have.)
+
+    Not placed in a parent layout (the caller floats and positions it
+    with move()/raise_()), so nothing ever resizes it to fit its buttons
+    automatically the way a layout-managed widget would - adjustSize()
+    at the end of __init__ does that once, explicitly; without it this
+    widget stays at whatever default size a bare QWidget starts with,
+    regardless of its buttons' actual content."""
 
     def __init__(self, modes=("2D", "3D"), active=None, onChange=None, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -428,8 +444,6 @@ class ViewModeTabs(QWidget):
         self._theme = theme
         self._onChange = onChange
         self._active = active if active is not None else modes[0]
-
-        self.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -454,6 +468,9 @@ class ViewModeTabs(QWidget):
             self._buttons[mode] = button
 
         self._applyStyles()
+        # See the class docstring - this widget floats outside any parent
+        # layout, so it never gets auto-sized to its content otherwise.
+        self.adjustSize()
 
     def _applyStyles(self):
         theme = self._theme
