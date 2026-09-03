@@ -25,7 +25,7 @@ class Palette:
     """An ordered list of PaletteEntry, indexed the same way as
     Canvas.map's color values (entry i is the color that map == i means).
     Wraps what used to be a bare Nx3 numpy array so a color can carry a
-    name without every numeric consumer (wandSelect, Mesh's per-color
+    name without every numeric consumer (bucketSelect, Mesh's per-color
     grouping, objExport's folder naming) needing to change how it looks
     colors up."""
 
@@ -51,7 +51,7 @@ class Palette:
     @property
     def colors(self):
         """Nx3 numpy array of every entry's color, for the numeric code
-        (wandSelect and friends) that just wants RGB rows."""
+        (bucketSelect and friends) that just wants RGB rows."""
         return np.array([entry.color for entry in self._entries], dtype=np.uint8)
 
     def indexOf(self, color):

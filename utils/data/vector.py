@@ -17,9 +17,6 @@ class Vector2:
         if type(multiplicand) in [int, float]:
             return Vector2(self.x * multiplicand, self.y * multiplicand)
 
-    def __imul__(self, multiplicand):
-        self = self * multiplicand
-
     __rmul__ = __mul__
 
     def __matmul__(self, multiplicand):

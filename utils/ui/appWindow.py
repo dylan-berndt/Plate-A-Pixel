@@ -21,9 +21,10 @@ class AppWindow(QMainWindow):
     """Assembles every top-level piece (menu bar, tab strip, tool options
     bar, tool rail, palette rail, mesh settings, status bar) around an
     AppController and keeps them all in sync with it. The 2D canvas view
-    and 3D mesh view aren't built yet (see canvasElement.py/meshElement.py)
-    - setCanvasArea/setMeshElement slot them in once they exist, so this
-    class doesn't need to change when they land.
+    and 3D mesh view (canvasElement.py/meshElement.py) are built
+    separately and slotted in via setCanvasArea/setMeshElement (see
+    main.py) rather than constructed here directly, so this class doesn't
+    import Qt-OpenGL machinery it doesn't otherwise need.
 
     ProjectController has no dedicated "dirty changed" or "undo state
     changed" signal (see ARCHITECTURE.md - isDirty/canUndo/canRedo are
@@ -192,9 +193,8 @@ class AppWindow(QMainWindow):
 
     def setExportHandler(self, handler):
         """`handler` is called with no arguments when File > Export is
-        chosen - the export dialog isn't built yet (see objExport.py's
-        rework and the Export window task); this is the seam it plugs
-        into."""
+        chosen - the seam main.py plugs ExportDialog into, so this class
+        doesn't need to import it directly."""
         self._exportHandler = handler
 
     def _onExportRequested(self):

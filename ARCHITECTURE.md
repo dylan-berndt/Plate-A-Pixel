@@ -13,7 +13,7 @@ utils/data/         domain layer   - no Qt imports at all
 utils/tools/         tool layer    - no Qt imports (Tool/FunctionalTool/ToolRegistry);
                                        Options is UI-schema data, not a widget
 utils/controllers/   controller    - Qt-aware (QObject/Signal), no QWidget
-utils/ui/, canvasElement.py, meshElement.py   views - not yet built
+utils/ui/, canvasElement.py, meshElement.py, exportDialog.py   views
 ```
 
 A view widget only ever talks to the controller layer: it reads state
@@ -26,10 +26,10 @@ when to redraw. It never calls into `utils/data/` directly.
 - **`Canvas`** (`canvas.py`) — `image` (scale-reduced RGB array), `map`
   (per-pixel palette index), `layers` (per-pixel height, `-1` = empty),
   `selection` (bool mask), `palette` (a `Palette`). Selection ops:
-  `wandSelect` (by an explicit color), `bucketSelect` (contiguous or not,
-  from a clicked position), `brushSelect` (every cell within a radius,
-  color-blind). `transformSelection(delta)` raises/lowers the current
-  selection's height.
+  `bucketSelect` (contiguous or not, from a clicked position),
+  `brushSelect` (every cell within a radius, color-blind).
+  `transformSelection(delta)` raises/lowers the current selection's
+  height.
 - **`Palette`** (`palette.py`) — an ordered list of `PaletteEntry(color,
   name)`, indexed the same way `Canvas.map`'s values are. `.colors` gives
   the numeric code (selection, mesh, export) an Nx3 array when it just
@@ -62,9 +62,26 @@ when to redraw. It never calls into `utils/data/` directly.
   pixels in one component (e.g. the auto-generated base plate on a large
   canvas). A rare topological ambiguity - two pixels touching only at one
   grid corner with no shared edge (diagonal pixels whose bulges overlap,
-  no fusing) - falls back to the old per-pixel-box-plus-union approach
-  for just that group; real usage essentially never hits it, since the
-  base plate already occupies both of a diagonal pair's flanking cells.
+  no fusing) - makes the native-resolution boundary trace ambiguous (which
+  of the two crossing edges continues the loop?), so that group falls back
+  to tracing a finer coordinate-compressed coverage grid instead (see
+  `_capCoverageFine`/`_tubeCoverageFine` in `pixelComponents.py`), where the
+  overlap shows up as real covered area rather than one ambiguous point;
+  real usage essentially never hits it, since the base plate already
+  occupies both of a diagonal pair's flanking cells.
+
+  `componentTrianglesFast` is a second, deliberately non-watertight
+  pipeline used only for the live viewport (see `fastPreview` below) - it
+  tiles flat faces directly and draws one quad per merged boundary run
+  instead of ear-clipping and CSG, trading a real printable solid for
+  speed. Its coverage-grid helpers (`_fastCapCoverage`/`_fastTubeCoverage`)
+  parallel `_capCoverageFine`/`_tubeCoverageFine` but only cut the grid
+  finer where a pixel's own side actually needs it, rather than
+  unconditionally for every pixel - profiling found the unconditional
+  version too slow to run on every edit. This duplication between the two
+  pipelines is intentional, not drift: exactness and interactive speed are
+  genuinely different goals, and the fast path never feeds export or an
+  actual solid.
 - **`Project`** (`project.py`) — one open document: a `Canvas` + its
   `Palette` + a `Mesh` + `ViewSettings` (`hollow`, `baseMargin`,
   `cellWidth`, `cellHeight` in mm, `tubeMargin`, `wallThickness`,
@@ -86,9 +103,10 @@ when to redraw. It never calls into `utils/data/` directly.
 
 **Tools are selection-only.** Every tool that exists changes
 `canvas.selection`; nothing about *height* goes through a tool — raising
-or lowering the current selection is a separate, not-yet-built part of
-the interface that will call `CanvasController.transformSelectionLayer`
-directly. Don't add a "height tool" without revisiting this.
+or lowering the current selection is a separate part of the interface
+(the layer-height stepper in `utils/ui/toolRail.py`) that calls
+`CanvasController.transformSelectionLayer` directly. Don't add a "height
+tool" without revisiting this.
 
 - **`Tool`** (`tool.py`) — pure state: `name`, `options` (a schema of
   `Options(label, type, choices)` describing what's configurable), and
@@ -122,11 +140,14 @@ directly. Don't add a "height tool" without revisiting this.
   an unknown name.
 
 Explicitly not built (skip unless asked): palette-swatch-click-to-select
-(would need `Canvas.wandSelect` wired to something — nothing calls it
-right now), a radius-based *height* brush (no domain support for that),
-palette drag-reordering (`Canvas.map`'s indices are tied to palette
-order — reordering would need new domain support to remap them; decided
-not needed for now).
+(`Canvas.bucketSelect(pos, contiguous=False)` already selects every cell
+of a given color from a clicked position - a swatch-click variant would
+need something equivalent driven by a color instead of a position; there
+used to be a `Canvas.wandSelect(color)` for exactly that, removed since
+nothing called it), a radius-based *height* brush (no domain support for
+that), palette drag-reordering (`Canvas.map`'s indices are tied to
+palette order — reordering would need new domain support to remap them;
+decided not needed for now).
 
 ## Controller layer (`utils/controllers/`)
 
@@ -243,11 +264,53 @@ example on the table is a future outline overlay for the 2D view; there
 may be others. Decide what goes here as those needs become concrete —
 don't invent methods speculatively.
 
-## Views — not yet built
+## Views (`utils/ui/`, `canvasElement.py`, `meshElement.py`, `exportDialog.py`)
 
-Nothing under `utils/ui/`, `canvasElement.py`, or `meshElement.py` is
-wired up yet; those files are still stubs. Whoever builds them should be
-able to do so entirely against the controller-layer signals/methods
-above without needing new domain or controller work, with the exception
-of whatever `CanvasController` ends up needing once its first real
-operation is identified.
+Built entirely against the controller-layer signals/methods above; nothing
+here calls into `utils/data/` directly (the one exception is `Vector2`,
+`canvasElement.py`'s own screen-space pan/zoom helper - a UI-layer
+concern, not domain state).
+
+- **`utils/ui/base.py`** — `Theme`: the app's colors/fonts/chrome metrics
+  as one dataclass (lifted from `design/ui-mockup.html`'s draft palette),
+  so retheming is one object instead of a grep across widgets. Every
+  composite widget below takes a `Theme` instead of hardcoding colors.
+- **`utils/ui/elements.py`** — the shared widget primitives everything
+  else is built from (`Text`/`SectionLabel`/`MonoText`, `Button`/
+  `IconButton`/`PillToggle`, `Slider`/`Stepper`/`Dropdown`/
+  `SegmentedControl`, `PaletteRow`, `Tab`/`TabBar`, plus
+  `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
+  live widget generically, so a new tool option never needs hand-written
+  UI). No project- or controller-specific logic lives here.
+- **`utils/ui/menuBar.py`, `toolRail.py`, `toolOptionsBar.py`,
+  `paletteRail.py`, `meshSettingsPanel.py`, `statusBar.py`** — the
+  concrete panels `AppWindow` assembles: File/Edit/View menu
+  (`MenuBar`), tool selector (`ToolRail`), the active tool's own options
+  plus Undo/Redo (`ToolOptionsBar`), the palette list (`PaletteRail`),
+  the Solid/Hollow + margin + structural-geometry + export-scale card
+  (`MeshSettingsPanel`), and the bottom status strip (`StatusBar`). Each
+  binds to a `ProjectController` (`bindProject`) and redraws off its
+  signals; none of them touch `utils/data/` directly.
+- **`utils/ui/appWindow.py`** — `AppWindow`: assembles all of the above
+  around an `AppController`, plus a tab strip driving
+  `AppController.newProjectFromImage`/`setActiveProject`/`closeProject`.
+  `setCanvasArea`/`setMeshElement` slot in the 2D/3D views below (kept as
+  a separate seam so `AppWindow` doesn't import Qt-OpenGL machinery it
+  doesn't otherwise need); `setExportHandler` wires in whatever opens
+  `ExportDialog`. `main.py` is what actually calls all three.
+- **`canvasElement.py`** — the 2D view: `CanvasArtist` (paints
+  `canvas.map` through `canvas.palette.colors`, the selection overlay and
+  its marching-ants outline, and owns pan/zoom) and `CanvasArea` (routes
+  mouse events to `ToolController.press`/`drag`/`release`, and handles
+  middle-drag pan / wheel zoom directly since those are view navigation,
+  not an edit).
+- **`meshElement.py`** — the 3D print preview: `MeshElement`, a
+  `QOpenGLWidget` doing one flat-shaded draw call per palette color (plus
+  the base plate) straight off `Project.mesh.meshes`, with simple
+  orbit/pan/zoom camera controls.
+- **`exportDialog.py`** — `ExportDialog`: File > Export's window - a live
+  `MeshElement` preview, the destination path, cell-size steppers (driving
+  the same `CanvasController.setCellWidth`/`setCellHeight` the mesh
+  settings card uses), and the save-guard/warnings checks from
+  `objExport.py` (`unnamedColorIndices`, `duplicateColorNames`,
+  `mesh.warnings`) surfaced before the user can hit Export.
