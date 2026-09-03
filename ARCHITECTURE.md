@@ -282,10 +282,6 @@ concern, not domain state).
   `buildOptionWidget` - which turns a `Tool.Options` schema entry into a
   live widget generically, so a new tool option never needs hand-written
   UI). No project- or controller-specific logic lives here.
-- **`utils/ui/manager.py`** — `Window`: a generic themed `QMainWindow`
-  shell. Not currently used by `main.py` (`AppWindow` below is the real
-  top-level window) - kept as the plain building block the composite
-  panels are meant to be testable against in isolation.
 - **`utils/ui/menuBar.py`, `toolRail.py`, `toolOptionsBar.py`,
   `paletteRail.py`, `meshSettingsPanel.py`, `statusBar.py`** — the
   concrete panels `AppWindow` assembles: File/Edit/View menu
