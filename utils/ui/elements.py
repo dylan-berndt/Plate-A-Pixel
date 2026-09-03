@@ -612,9 +612,19 @@ class TabBar(QWidget):
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
-            if widget is not None:
-                # deleteLater(), not setParent(None) - see the identical
-                # note in PaletteRail._rebuild.
+            # deleteLater(), not setParent(None) - see the identical note
+            # in PaletteRail._rebuild. Not identical in one way that
+            # matters, though: unlike that layout (which only ever holds
+            # disposable rows), this one also holds _newTabButton, a
+            # single persistent widget re-added at the end of every call
+            # rather than recreated - deleteLater()-ing it here too would
+            # still let it be re-added lower down in *this* call (the
+            # actual deletion is deferred to the next event-loop tick),
+            # but the very next setTabs() call would be reusing a Python
+            # wrapper around an already-destroyed C++ object, raising
+            # "Internal C++ object already deleted" the moment it's
+            # touched again (addWidget, or this same deleteLater()).
+            if widget is not None and widget is not self._newTabButton:
                 widget.deleteLater()
 
         self._tabs = []
