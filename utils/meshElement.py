@@ -81,16 +81,21 @@ def _trianglesToArrays(triangles):
     flat per-triangle (the same face normal repeated for all 3 corners)
     rather than vertex-averaged - these are boxy, axis-aligned pixel
     solids (pixelComponents.py), so a hard-edged low-poly look is the
-    correct one, not smoothed shading."""
+    correct one, not smoothed shading.
+
+    Vectorized across every triangle at once rather than one Python-level
+    np.cross/np.linalg.norm call per triangle - this runs on the GUI
+    thread (paintGL, via _rebuildBuffers), on the *whole* mesh every time
+    any part of it changes, so the per-triangle-call version turns into
+    real, scene-total-triangle-count-scaled UI unresponsiveness on
+    anything but a tiny mesh (measured: ~2.2s for 89k triangles, blocking
+    the GUI thread for that whole span)."""
     positions = np.asarray(triangles, dtype=np.float32)
-    normals = np.zeros_like(positions)
-    for i in range(0, len(positions), 3):
-        a, b, c = positions[i], positions[i + 1], positions[i + 2]
-        n = np.cross(b - a, c - a)
-        length = np.linalg.norm(n)
-        if length > 1e-8:
-            n = n / length
-        normals[i:i + 3] = n
+    a, b, c = positions[0::3], positions[1::3], positions[2::3]
+    faceNormals = np.cross(b - a, c - a)
+    lengths = np.linalg.norm(faceNormals, axis=1, keepdims=True)
+    faceNormals = np.divide(faceNormals, lengths, out=np.zeros_like(faceNormals), where=lengths > 1e-8)
+    normals = np.repeat(faceNormals, 3, axis=0)
     return positions, normals
 
 
