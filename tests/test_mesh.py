@@ -6,7 +6,7 @@ import trimesh
 from PIL import Image
 
 from utils.data.canvas import Canvas
-from utils.data.mesh import Mesh
+from utils.data.mesh import Mesh, computeMeshData, _packMeshes, unpackMeshes
 
 FIRE1_PATH = Path(__file__).resolve().parent.parent / "fire1.png"
 
@@ -345,3 +345,34 @@ def test_toggling_fast_preview_forces_a_recompute_even_with_nothing_else_changed
     # If _checkForUpdate missed the flag flip, _calculateMesh would have
     # no-op'd and left fastPreviewCache at its old value.
     assert mesh.fastPreviewCache is True
+
+
+def test_pack_unpack_meshes_round_trips(two_color_canvas):
+    # _packMeshes/unpackMeshes exist purely to make the process-pool round
+    # trip cheap (see ProjectController._MeshWorker) - a numpy array
+    # pickles far faster than a list of individual Vector3 objects, but
+    # only if the round trip actually reproduces the same triangle data.
+    two_color_canvas.layers[:] = 1
+    meshes, warnings = computeMeshData(
+        two_color_canvas.map, two_color_canvas.layers, len(two_color_canvas.palette),
+        False, True, 0, 0.12, 0.1, 0.10,
+    )
+
+    roundTripped = unpackMeshes(_packMeshes(meshes))
+
+    assert len(roundTripped) == len(meshes)
+    for originalComponents, roundTrippedComponents in zip(meshes, roundTripped):
+        assert len(originalComponents) == len(roundTrippedComponents)
+        for originalTriangles, roundTrippedTriangles in zip(originalComponents, roundTrippedComponents):
+            assert len(originalTriangles) == len(roundTrippedTriangles)
+            for a, b in zip(originalTriangles, roundTrippedTriangles):
+                # float32 in the packed form, not exact - close enough that
+                # no visible difference survives at this geometry's scale.
+                assert a.x == pytest.approx(b.x, abs=1e-5)
+                assert a.y == pytest.approx(b.y, abs=1e-5)
+                assert a.z == pytest.approx(b.z, abs=1e-5)
+
+
+def test_pack_unpack_meshes_handles_an_empty_component():
+    roundTripped = unpackMeshes(_packMeshes([[[]]]))
+    assert roundTripped == [[[]]]
