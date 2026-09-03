@@ -3,17 +3,22 @@ from PIL import Image
 from PySide6.QtWidgets import QFileDialog
 
 from .palette import Palette
+from .colorNaming import autoNamesForUnnamed
 
 
 class Canvas:
     def __init__(self, image: np.array, scale: int = None, palette: Palette = None, layers: np.array = None):
         """Builds a Canvas from a raw image by default (auto-detecting scale
-        and the palette from the image's own unique colors). `scale`,
-        `palette` and `layers` let a caller (Project.load) supply all three
-        explicitly instead, reconstructing the exact canvas a save captured
-        - matching pixels against the saved palette's own color order
-        rather than re-deriving it, so a later recolor can't desync a
-        reload from what was actually saved."""
+        and the palette from the image's own unique colors, each entry
+        auto-named right away via colorNaming.autoNamesForUnnamed - see
+        below - so a freshly imported image never sits with blank palette
+        names until the user gets around to it). `scale`, `palette` and
+        `layers` let a caller (Project.load) supply all three explicitly
+        instead, reconstructing the exact canvas a save captured - matching
+        pixels against the saved palette's own color order rather than
+        re-deriving it, so a later recolor can't desync a reload from what
+        was actually saved; a loaded palette's names (however they got set)
+        are left exactly as saved, not re-run through auto-naming."""
         if scale is None:
             self.image, self.scale = Canvas.detectScale(image)
         else:
@@ -22,6 +27,8 @@ class Canvas:
         if palette is None:
             uniqueColors = np.unique(np.reshape(self.image, [-1, self.image.shape[-1]]), axis=0)
             palette = Palette(uniqueColors)
+            for index, name in autoNamesForUnnamed(palette).items():
+                palette.rename(index, name)
         self.palette = palette
 
         layerShape = self.image.shape[:-1]

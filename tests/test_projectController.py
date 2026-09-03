@@ -177,8 +177,12 @@ def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
 
 
 def test_save_auto_names_unnamed_palette_entries_first(controller, tmp_path):
+    # Canvas already auto-names every entry on import (see colorNaming.py)
+    # - blank one back out to set up the "still unnamed" case save() is
+    # actually meant to backfill (a user clearing a name by hand, e.g.).
     palette = controller.project.canvas.palette
-    assert any(not entry.name for entry in palette)  # fixture starts unnamed
+    controller.canvasController.renameColor(0, "")
+    assert any(not entry.name for entry in palette)
 
     controller.save(str(tmp_path / "test.pap"))
 
@@ -194,13 +198,15 @@ def test_save_does_not_touch_already_named_entries(controller, tmp_path):
 
 
 def test_save_without_a_path_raises_before_auto_naming_anything(controller):
+    controller.canvasController.renameColor(0, "")
     palette = controller.project.canvas.palette
 
     with pytest.raises(ValueError):
         controller.save()
 
-    # No path to save to at all - nothing should have been touched.
-    assert all(not entry.name for entry in palette)
+    # No path to save to at all - the blank set up above should still be
+    # blank; nothing should have been auto-named.
+    assert palette[0].name == ""
 
 
 def test_project_controller_owns_a_canvas_controller(controller):

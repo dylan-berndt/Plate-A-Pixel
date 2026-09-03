@@ -132,11 +132,15 @@ def test_rename_color_updates_palette_and_emits(controller):
 
 def test_rename_color_undo_reverts(controller):
     index = controller.project.canvas.palette.indexOf(RED)
+    # Canvas auto-names every entry on import (see colorNaming.py), so
+    # the pre-rename name isn't blank - capture whatever it actually is
+    # rather than assuming "".
+    originalName = controller.project.canvas.palette[index].name
     controller.canvasController.renameColor(index, "Fire Red")
 
     controller.undo()
 
-    assert controller.project.canvas.palette[index].name == ""
+    assert controller.project.canvas.palette[index].name == originalName
 
 
 def test_recolor_color_updates_palette_and_emits(controller):
@@ -197,9 +201,14 @@ def test_select_all_undo_reverts(controller):
 
 
 def test_auto_name_unnamed_colors_fills_in_every_blank_name(controller):
-    calls = spy(controller.paletteChanged)
+    # Canvas already auto-names every entry on import (see colorNaming.py
+    # and test_canvas.py's own coverage of that) - blank a couple back
+    # out here to set up the "still unnamed" precondition this method is
+    # actually meant to backfill (a user clearing a name by hand, e.g.).
     palette = controller.project.canvas.palette
-    assert any(not entry.name for entry in palette)  # fixture starts unnamed
+    controller.canvasController.renameColor(0, "")
+    controller.canvasController.renameColor(1, "")
+    calls = spy(controller.paletteChanged)
 
     controller.canvasController.autoNameUnnamedColors()
 
@@ -228,10 +237,18 @@ def test_auto_name_unnamed_colors_is_a_no_op_when_everything_is_named(controller
 
 
 def test_auto_name_unnamed_colors_undoes_as_one_step(controller):
-    controller.canvasController.autoNameUnnamedColors()
+    controller.canvasController.renameColor(0, "")  # set up an actual blank to fill in
+    controller.canvasController.renameColor(1, "")
 
+    controller.canvasController.autoNameUnnamedColors()
     controller.undo()
 
     # undo() replaces canvas.palette wholesale (see ProjectController.
     # _restore) - re-fetch it rather than reusing a pre-undo reference.
-    assert all(not entry.name for entry in controller.project.canvas.palette)
+    # One undo() must land back on "both blanked out", not "auto-named" -
+    # if autoNameUnnamedColors() pushed more than the one undo snapshot
+    # its own docstring promises, this would still show the filled-in
+    # names after a single undo.
+    palette = controller.project.canvas.palette
+    assert palette[0].name == ""
+    assert palette[1].name == ""

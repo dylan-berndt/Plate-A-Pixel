@@ -15,6 +15,29 @@ def test_palette_has_three_colors(canvas):
     assert len(canvas.palette) == 3
 
 
+def test_palette_entries_are_auto_named_on_import(canvas):
+    # Every entry gets a real name the moment a fresh image is imported
+    # (colorNaming.autoNamesForUnnamed), not left blank until the user
+    # renames it by hand or saves.
+    assert all(entry.name for entry in canvas.palette)
+    # Each of RED/GREEN/BACKGROUND is the only member of its own color
+    # family here, so each gets just the family name, no "N" suffix.
+    assert canvas.palette[canvas.palette.indexOf((220, 40, 40))].name == "Red"
+    assert canvas.palette[canvas.palette.indexOf((40, 180, 90))].name == "Green"
+
+
+def test_loading_a_saved_palette_does_not_re_auto_name_it(canvas):
+    # A caller supplying `palette` explicitly (Project.load, reopening a
+    # saved *.pap) is reconstructing exactly what was saved, blank names
+    # included if that's genuinely what was saved - auto-naming only
+    # ever applies to a *freshly detected* palette, not one already
+    # given.
+    from utils.data.palette import Palette, PaletteEntry
+    palette = Palette(colors=None, entries=[PaletteEntry(color=(220, 40, 40), name="")])
+    reloaded = Canvas(canvas.image, scale=canvas.scale, palette=palette, layers=canvas.layers)
+    assert reloaded.palette[0].name == ""
+
+
 def test_from_file_path_round_trip(tmp_path, pixel_art_image):
     path = tmp_path / "fixture.png"
     Image.fromarray(pixel_art_image).save(path)

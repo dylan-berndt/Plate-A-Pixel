@@ -26,10 +26,25 @@ when to redraw. It never calls into `utils/data/` directly.
 - **`Canvas`** (`canvas.py`) — `image` (scale-reduced RGB array), `map`
   (per-pixel palette index), `layers` (per-pixel height, `-1` = empty),
   `selection` (bool mask), `palette` (a `Palette`). Selection ops:
-  `bucketSelect` (contiguous or not, from a clicked position),
+  `bucketSelect` (contiguous or not, from a clicked position, with an
+  optional `source` array to test against - see `WandTool.onPress` for
+  why the layer canvas passes `layers` instead of the default `map`),
   `brushSelect` (every cell within a radius, color-blind).
   `transformSelection(delta)` raises/lowers the current selection's
-  height.
+  height. `selectAll`/`deselectAll`/`invertSelection` are whole-canvas,
+  no position needed.
+
+  When `__init__` auto-detects a fresh palette from the image's own
+  unique colors (the `palette=None` path - a brand-new import, not
+  `Project.load` reconstructing a saved one), every entry is also
+  auto-named right away via `colorNaming.autoNamesForUnnamed` - a
+  freshly imported image never sits with blank palette names in the
+  rail until the user gets around to naming them, or until
+  `ProjectController.save()`'s own auto-naming (a separate, later safety
+  net - see `CanvasController.autoNameUnnamedColors`) fills them in as a
+  side effect of saving. A `palette` supplied explicitly is never
+  touched by this - reloading a saved project must reproduce exactly the
+  names that were actually saved, blank or not.
 - **`Palette`** (`palette.py`) — an ordered list of `PaletteEntry(color,
   name)`, indexed the same way `Canvas.map`'s values are. `.colors` gives
   the numeric code (selection, mesh, export) an Nx3 array when it just
