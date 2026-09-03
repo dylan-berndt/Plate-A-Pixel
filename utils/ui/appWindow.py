@@ -157,7 +157,18 @@ class AppWindow(QMainWindow):
         self._viewModeTabs = ViewModeTabs(
             modes=("2D", "3D"), active="2D", onChange=self._setViewMode, theme=self.theme, parent=centerWidget,
         )
-        self._viewModeTabs.move(10, 10)
+        # Flush against centerWidget's own top edge, not floating below it -
+        # centerWidget starts exactly where the tool options bar ends, so
+        # this is what actually puts the tabs' squared top against the
+        # bottom of that bar instead of leaving a visible gap.
+        self._viewModeTabs.move(10, 0)
+        # raise_() alone only fixes the plain-QWidget page (2D); Qt composites
+        # a QOpenGLWidget (the mesh page's MeshElement) through a separate
+        # path that can still paint over a raised sibling unless that
+        # sibling opts in with WA_AlwaysStackOnTop - see QOpenGLWidget's own
+        # docs on overlapping widgets. Without this, the tabs vanished the
+        # moment the 3D page (meshPage) held a real GL surface.
+        self._viewModeTabs.setAttribute(Qt.WA_AlwaysStackOnTop, True)
         self._viewModeTabs.raise_()
 
         splitter.addWidget(centerWidget)

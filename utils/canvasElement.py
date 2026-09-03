@@ -343,7 +343,13 @@ class LayerCanvasArtist(CanvasArtist):
     LOW_GRAY = 60
     HIGH_GRAY = 255
     UNASSIGNED_GRAY = 235
-    MIN_LABEL_CELL = 14
+    # The layer canvas shares its pane with the color canvas (see
+    # AppWindow's 2D page), so its cells are routinely half the width
+    # they'd be as a full-pane view - a threshold tuned for a full pane
+    # (originally 14) left labels never appearing for anything but a
+    # tiny canvas. 6 is close to the floor where a single digit is still
+    # legible at all.
+    MIN_LABEL_CELL = 6
 
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(theme=theme, **kwargs)
@@ -397,7 +403,7 @@ class LayerCanvasArtist(CanvasArtist):
         ys, xs = np.nonzero(layers >= 1)
 
         font = painter.font()
-        font.setPointSizeF(max(6.0, min(11.0, cell * 0.4)))
+        font.setPointSizeF(max(4.0, min(11.0, cell * 0.45)))
         painter.setFont(font)
 
         for y, x in zip(ys.tolist(), xs.tolist()):
