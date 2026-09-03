@@ -385,3 +385,25 @@ def test_fast_preview_matches_the_exact_volume_of_a_ring_around_a_hole():
     fast = componentTrianglesFast(plans)
 
     assert _volume(fast) == pytest.approx(_volume(exact), abs=1e-5)
+
+
+def test_fast_preview_merges_a_large_uniform_blocks_walls_into_a_simple_box():
+    # Regression: _rawEdges reports one boundary edge per native grid cell
+    # by design (see _mergedBoundaryRuns) - a big flat, uniformly-covered
+    # block (a solid background, a base plate) has a straight boundary
+    # that must collapse into one wall quad per side, not one per pixel
+    # of edge length. A 20x20 block that comes out as more than a plain
+    # box's 12 triangles means that merge isn't happening.
+    n = 20
+    plans = []
+    for y in range(n):
+        for x in range(n):
+            fused, bulged = set(), set()
+            for face in Face:
+                ny, nx = face.neighbor(y, x)
+                (fused if 0 <= ny < n and 0 <= nx < n else bulged).add(face)
+            plans.append(PixelPlan(y=y, x=x, color=0, height=1, fused=fused, bulged=bulged))
+
+    fast = componentTrianglesFast(plans)
+
+    assert len(fast) // 3 == 12

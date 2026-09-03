@@ -337,13 +337,11 @@ def test_toggling_fast_preview_forces_a_recompute_even_with_nothing_else_changed
     mesh = Mesh()
     mesh.canvas = two_color_canvas
     mesh._calculateMesh()
-    exactTriangleCount = total_real_triangles(mesh, two_color_canvas)
+    assert mesh.fastPreviewCache is False
 
     mesh.fastPreview = True
     mesh._calculateMesh()
-    fastTriangleCount = total_real_triangles(mesh, two_color_canvas)
 
-    # componentTriangles and componentTrianglesFast tile the same geometry
-    # differently - if _checkForUpdate missed the flag flip, _calculateMesh
-    # would have no-op'd and left the exact (unequal) triangle count.
-    assert fastTriangleCount != exactTriangleCount
+    # If _checkForUpdate missed the flag flip, _calculateMesh would have
+    # no-op'd and left fastPreviewCache at its old value.
+    assert mesh.fastPreviewCache is True

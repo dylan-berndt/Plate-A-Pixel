@@ -772,9 +772,48 @@ def _singlePassTiles(mask):
     return rects
 
 
+def _mergedBoundaryRuns(covered):
+    """Consecutive raw boundary edges along one straight run, merged into
+    one span each. _rawEdges reports edges at native grid-cell
+    granularity by design (the boundary-trace path merges them via
+    _mergeCollinear before extruding) - a long straight run split into
+    hundreds of unmerged wall quads is real, wasted triangle count for a
+    renderer, not just a cosmetic difference.
+
+    Each direction's raw edges chain in a specific order (see
+    _rawEndpoints): N and E chain with increasing c/r, S and W with
+    decreasing - getting that backwards would silently reverse those
+    walls' winding."""
+    byRow, byCol = {}, {}
+    for kind, r, c in _rawEdges(covered):
+        (byRow if kind in ('N', 'S') else byCol).setdefault((kind, r if kind in ('N', 'S') else c), []).append(
+            c if kind in ('N', 'S') else r
+        )
+
+    def ranges(values):
+        values = sorted(values)
+        start = prev = values[0]
+        for v in values[1:]:
+            if v == prev + 1:
+                prev = v
+                continue
+            yield start, prev + 1
+            start = prev = v
+        yield start, prev + 1
+
+    spans = []
+    for (kind, r), cs in byRow.items():
+        for c0, c1 in ranges(cs):
+            spans.append(((c0, r), (c1, r)) if kind == 'N' else ((c1, r + 1), (c0, r + 1)))
+    for (kind, c), rs in byCol.items():
+        for r0, r1 in ranges(rs):
+            spans.append(((c + 1, r0), (c + 1, r1)) if kind == 'E' else ((c, r1), (c, r0)))
+    return spans
+
+
 def _fastSolidFromCoverage(covered, xEdges, zEdges, yBottom, yTop):
-    """Top + bottom (tiled, not ear-clipped) + walls (one quad per raw
-    boundary edge, not joined into a loop) for one coverage grid."""
+    """Top + bottom (tiled, not ear-clipped) + walls (one quad per merged
+    boundary run) for one coverage grid."""
     triangles = []
 
     for (r0, c0, r1, c1) in _singlePassTiles(covered):
@@ -785,8 +824,7 @@ def _fastSolidFromCoverage(covered, xEdges, zEdges, yBottom, yTop):
         triangles += [Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z0), Vector3(x1, yBottom, z1)]
         triangles += [Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z1), Vector3(x0, yBottom, z1)]
 
-    for kind, r, c in _rawEdges(covered):
-        (ax, az), (bx, bz) = _rawEndpoints(kind, r, c)
+    for (ax, az), (bx, bz) in _mergedBoundaryRuns(covered):
         xa, za = float(xEdges[ax]), float(zEdges[az])
         xb, zb = float(xEdges[bx]), float(zEdges[bz])
         triangles += [Vector3(xa, yBottom, za), Vector3(xb, yTop, zb), Vector3(xb, yBottom, zb)]
