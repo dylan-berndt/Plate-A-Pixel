@@ -2,7 +2,6 @@ import numpy as np
 import trimesh
 
 from .pixelPlan import Face
-from .vector import Vector3
 
 
 # Axes: X = pixel column, Z = pixel row, Y = height (the vertical/print
@@ -10,6 +9,10 @@ from .vector import Vector3
 TUBE_MARGIN = 0.12           # how far the tube is inset from the pixel's unit-square edge
 WALL_THICKNESS = 0.1         # shell thickness when a Tube is hollow
 BULGE_SIZE = 0.10            # how far a cap flares out past the grid edge on a clear side
+
+# A triangle soup, this codebase's usual convention: an (N, 3) float array
+# of vertices, 3 rows per triangle, no shared indices.
+_EMPTY_TRIANGLES = np.empty((0, 3), dtype=float)
 
 
 def _box(x0, x1, y0, y1, z0, z1):
@@ -20,9 +23,8 @@ def _box(x0, x1, y0, y1, z0, z1):
 
 
 def _toTrimesh(triangles):
-    verts = [(v.x, v.y, v.z) for v in triangles]
-    faces = [[i, i + 1, i + 2] for i in range(0, len(triangles), 3)]
-    return trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+    faces = np.arange(len(triangles)).reshape(-1, 3)
+    return trimesh.Trimesh(vertices=triangles, faces=faces, process=True)
 
 
 def _fromTrimesh(mesh):
@@ -30,11 +32,7 @@ def _fromTrimesh(mesh):
     # mesh.vertices (a cached property, but still a per-access call) once
     # per (face, corner) pair - same triangle-soup result, far fewer calls
     # on a mesh with thousands of faces.
-    # .tolist() converts the whole gathered array to plain Python floats in
-    # one call - iterating the numpy array directly would instead re-box
-    # each of the three coordinates as a numpy scalar on every row.
-    verts = mesh.vertices[mesh.faces.reshape(-1)].tolist()
-    return [Vector3(x, y, z) for x, y, z in verts]
+    return mesh.vertices[mesh.faces.reshape(-1)]
 
 
 # ---------------------------------------------------------------------------
@@ -57,13 +55,21 @@ def _rawEdges(covered):
     """Boundary edges of `covered` (a 2D bool array) at native resolution,
     found via array-shift transitions rather than visiting every cell -
     cost is proportional to perimeter, not area."""
-    # bool -> int8 once and reused, rather than once per shifted copy.
-    coveredInt = covered.astype(np.int8)
-    diffH = np.pad(coveredInt, ((0, 1), (0, 0))) - np.pad(coveredInt, ((1, 0), (0, 0)))
+    rows, cols = covered.shape
+    # One padded array (zero-initialized, covered copied into the middle)
+    # per axis, sliced into the two shifted views a plain np.pad call
+    # would otherwise build (and validate) separately, twice - np.pad's
+    # generic machinery has real per-call overhead at this scale (one
+    # call per group, thousands of groups).
+    paddedH = np.zeros((rows + 2, cols), dtype=np.int8)
+    paddedH[1:-1] = covered
+    diffH = paddedH[1:] - paddedH[:-1]
     nH, nC = np.nonzero(diffH == 1)
     sH, sC = np.nonzero(diffH == -1)
 
-    diffV = np.pad(coveredInt, ((0, 0), (0, 1))) - np.pad(coveredInt, ((0, 0), (1, 0)))
+    paddedV = np.zeros((rows, cols + 2), dtype=np.int8)
+    paddedV[:, 1:-1] = covered
+    diffV = paddedV[:, 1:] - paddedV[:, :-1]
     wR, wV = np.nonzero(diffV == 1)
     eR, eV = np.nonzero(diffV == -1)
 
@@ -245,15 +251,15 @@ def _extrudeSolid(loop, yBottom, yTop):
         loop = list(reversed(loop))
     triangles = []
     for (a, b, c) in _earClip(loop):
-        triangles += [Vector3(a[0], yTop, a[1]), Vector3(c[0], yTop, c[1]), Vector3(b[0], yTop, b[1])]
-        triangles += [Vector3(a[0], yBottom, a[1]), Vector3(b[0], yBottom, b[1]), Vector3(c[0], yBottom, c[1])]
+        triangles += [(a[0], yTop, a[1]), (c[0], yTop, c[1]), (b[0], yTop, b[1])]
+        triangles += [(a[0], yBottom, a[1]), (b[0], yBottom, b[1]), (c[0], yBottom, c[1])]
     n = len(loop)
     for i in range(n):
         xa, za = loop[i]
         xb, zb = loop[(i + 1) % n]
-        triangles += [Vector3(xa, yBottom, za), Vector3(xb, yTop, zb), Vector3(xb, yBottom, zb)]
-        triangles += [Vector3(xa, yBottom, za), Vector3(xa, yTop, za), Vector3(xb, yTop, zb)]
-    return triangles
+        triangles += [(xa, yBottom, za), (xb, yTop, zb), (xb, yBottom, zb)]
+        triangles += [(xa, yBottom, za), (xa, yTop, za), (xb, yTop, zb)]
+    return np.array(triangles, dtype=float) if triangles else _EMPTY_TRIANGLES
 
 
 def _assembleOuterMinusHoles(outer, holes, yBottom, yTop):
@@ -689,8 +695,8 @@ def _cavitySolid(plan, tubeMargin, wallThickness):
 
 def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL_THICKNESS, bulgeSize=BULGE_SIZE):
     """The merged solid for one physically-connected group of same-color,
-    same-height PixelPlans (see Mesh._calculateMesh), as a flat list of
-    Vector3 - 3 per triangle, no shared indices (this codebase's usual
+    same-height PixelPlans (see Mesh._calculateMesh), as an (N, 3) float
+    array - 3 rows per triangle, no shared indices (this codebase's usual
     triangle-soup convention).
 
     Built directly from each pixel's fused/bulged/flush classification
@@ -714,7 +720,7 @@ def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL
     # until the final return - see _assembleOuterMinusHoles for why.
     capMesh = _capSolid(planByPos, bulgeSize, height - 1.0, float(height), pinched)
     if height <= 1:
-        return _fromTrimesh(capMesh) if capMesh is not None else []
+        return _fromTrimesh(capMesh) if capMesh is not None else _EMPTY_TRIANGLES
 
     tubeMesh = _tubeSolid(planByPos, tubeMargin, height - 1.0, pinched)
     if hollow and tubeMesh is not None:
@@ -723,7 +729,7 @@ def componentTriangles(plans, hollow, tubeMargin=TUBE_MARGIN, wallThickness=WALL
             tubeMesh = trimesh.boolean.difference([tubeMesh, *cavityMeshes])
 
     if tubeMesh is None:
-        return _fromTrimesh(capMesh) if capMesh is not None else []
+        return _fromTrimesh(capMesh) if capMesh is not None else _EMPTY_TRIANGLES
     if capMesh is None:
         return _fromTrimesh(tubeMesh)
     merged = trimesh.boolean.union([capMesh, tubeMesh])
@@ -958,21 +964,21 @@ def _fastSolidFromCoverage(covered, xEdges, zEdges, yBottom, yTop):
         x0, x1 = xEdges[c0], xEdges[c1]
         z0, z1 = zEdges[r0], zEdges[r1]
         triangles.extend((
-            Vector3(x0, yTop, z0), Vector3(x1, yTop, z1), Vector3(x1, yTop, z0),
-            Vector3(x0, yTop, z0), Vector3(x0, yTop, z1), Vector3(x1, yTop, z1),
-            Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z0), Vector3(x1, yBottom, z1),
-            Vector3(x0, yBottom, z0), Vector3(x1, yBottom, z1), Vector3(x0, yBottom, z1),
+            (x0, yTop, z0), (x1, yTop, z1), (x1, yTop, z0),
+            (x0, yTop, z0), (x0, yTop, z1), (x1, yTop, z1),
+            (x0, yBottom, z0), (x1, yBottom, z0), (x1, yBottom, z1),
+            (x0, yBottom, z0), (x1, yBottom, z1), (x0, yBottom, z1),
         ))
 
     for (ax, az), (bx, bz) in _mergedBoundaryRuns(covered):
         xa, za = xEdges[ax], zEdges[az]
         xb, zb = xEdges[bx], zEdges[bz]
         triangles.extend((
-            Vector3(xa, yBottom, za), Vector3(xb, yTop, zb), Vector3(xb, yBottom, zb),
-            Vector3(xa, yBottom, za), Vector3(xa, yTop, za), Vector3(xb, yTop, zb),
+            (xa, yBottom, za), (xb, yTop, zb), (xb, yBottom, zb),
+            (xa, yBottom, za), (xa, yTop, za), (xb, yTop, zb),
         ))
 
-    return triangles
+    return np.array(triangles, dtype=float) if triangles else _EMPTY_TRIANGLES
 
 
 def componentTrianglesFast(plans, tubeMargin=TUBE_MARGIN, bulgeSize=BULGE_SIZE):
@@ -989,4 +995,4 @@ def componentTrianglesFast(plans, tubeMargin=TUBE_MARGIN, bulgeSize=BULGE_SIZE):
 
     tCovered, txEdges, tzEdges = _fastTubeCoverage(planByPos, tubeMargin)
     tubeTris = _fastSolidFromCoverage(tCovered, txEdges, tzEdges, 0.0, height - 1.0)
-    return capTris + tubeTris
+    return np.concatenate([capTris, tubeTris])

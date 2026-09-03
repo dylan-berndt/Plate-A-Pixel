@@ -8,14 +8,13 @@ from utils.data.objExport import (
     exportMeshObjs, writeObj, MM_PER_UNIT, unnamedColorIndices, duplicateColorNames,
 )
 from utils.data.palette import Palette
-from utils.data.vector import Vector3
 
 
 def test_write_obj_has_matching_vertex_and_face_counts(tmp_path):
-    triangles = [
-        Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0),
-        Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(0, 1, 0),
-    ]
+    triangles = np.array([
+        (0, 0, 0), (1, 0, 0), (0, 1, 0),
+        (1, 0, 0), (1, 1, 0), (0, 1, 0),
+    ], dtype=float)
     path = tmp_path / "square.obj"
 
     writeObj(triangles, str(path))
@@ -28,7 +27,7 @@ def test_write_obj_has_matching_vertex_and_face_counts(tmp_path):
 
 
 def test_write_obj_face_indices_are_valid_and_one_indexed(tmp_path):
-    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]
+    triangles = np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0)], dtype=float)
     path = tmp_path / "tri.obj"
 
     writeObj(triangles, str(path))
@@ -138,7 +137,7 @@ def _vertexLines(path):
 
 
 def test_write_obj_scales_coordinates_to_millimeters_by_default(tmp_path):
-    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]
+    triangles = np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0)], dtype=float)
     path = tmp_path / "tri.obj"
 
     writeObj(triangles, str(path))
@@ -148,7 +147,7 @@ def test_write_obj_scales_coordinates_to_millimeters_by_default(tmp_path):
 
 
 def test_write_obj_cell_width_and_height_are_independently_overridable(tmp_path):
-    triangles = [Vector3(0, 0, 0), Vector3(1, 0, 1), Vector3(0, 1, 0)]
+    triangles = np.array([(0, 0, 0), (1, 0, 1), (0, 1, 0)], dtype=float)
     path = tmp_path / "tri.obj"
 
     writeObj(triangles, str(path), cellWidth=2.0, cellHeight=5.0)
@@ -166,7 +165,7 @@ def test_export_mesh_objs_skips_empty_components(tmp_path):
 
     class FakeMesh:
         canvas = FakeCanvas()
-        meshes = [[[]], [[Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]]]
+        meshes = [[np.empty((0, 3))], [np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0)], dtype=float)]]
 
     paths = exportMeshObjs(FakeMesh(), str(tmp_path))
 

@@ -6,7 +6,7 @@ import trimesh
 from PIL import Image
 
 from utils.data.canvas import Canvas
-from utils.data.mesh import Mesh, computeMeshData, _packMeshes, unpackMeshes
+from utils.data.mesh import Mesh
 
 FIRE1_PATH = Path(__file__).resolve().parent.parent / "fire1.png"
 
@@ -101,9 +101,9 @@ def test_different_height_neighbors_never_fuse_even_when_connected(two_color_can
     # bulge ever reaches the other's own (inset) tube.
     assert BULGE_SIZE < TUBE_MARGIN
     blueVerts = mesh.meshes[blueIndex][0]
-    assert max(v.x for v in blueVerts) == pytest.approx(4.0 + BULGE_SIZE, abs=1e-5)
+    assert blueVerts[:, 0].max() == pytest.approx(4.0 + BULGE_SIZE, abs=1e-5)
     redVerts = mesh.meshes[redIndex][0]
-    assert min(v.x for v in redVerts) == pytest.approx(4.0 - BULGE_SIZE, abs=1e-5)
+    assert redVerts[:, 0].min() == pytest.approx(4.0 - BULGE_SIZE, abs=1e-5)
 
 
 def test_diagonal_same_height_pixels_no_longer_bulge_once_the_base_fills_their_flanks(two_color_canvas):
@@ -218,8 +218,8 @@ def test_base_plate_margin_extends_past_the_canvas_edge():
     withMargin._calculateMesh()
 
     def base_extent(mesh):
-        verts = [v for comp in mesh.meshes[base_index(canvas)] for v in comp]
-        return max(v.x for v in verts) - min(v.x for v in verts)
+        verts = np.concatenate(mesh.meshes[base_index(canvas)])
+        return verts[:, 0].max() - verts[:, 0].min()
 
     assert base_extent(withMargin) > base_extent(withoutMargin)
 
@@ -246,12 +246,12 @@ def test_a_taller_pixel_bulges_against_the_base():
     blueVerts = mesh.meshes[blueIndex][0]
     # it's surrounded entirely by (shorter) base cells, with no same-height
     # neighbor anywhere - so the cap bulges on every side.
-    assert max(v.x for v in blueVerts) == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
-    assert min(v.x for v in blueVerts) == pytest.approx(1.0 - BULGE_SIZE, abs=1e-5)
-    assert max(v.z for v in blueVerts) == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
-    assert min(v.z for v in blueVerts) == pytest.approx(1.0 - BULGE_SIZE, abs=1e-5)
+    assert blueVerts[:, 0].max() == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
+    assert blueVerts[:, 0].min() == pytest.approx(1.0 - BULGE_SIZE, abs=1e-5)
+    assert blueVerts[:, 2].max() == pytest.approx(2.0 + BULGE_SIZE, abs=1e-5)
+    assert blueVerts[:, 2].min() == pytest.approx(1.0 - BULGE_SIZE, abs=1e-5)
 
-    baseVerts = [v for comp in mesh.meshes[base_index(canvas)] for v in comp]
+    baseVerts = np.concatenate(mesh.meshes[base_index(canvas)])
     assert len(baseVerts) > 0
 
 
@@ -297,20 +297,18 @@ def test_raising_a_selection_on_a_real_image_stays_watertight():
 
     for colorMeshes in mesh.meshes:
         for component in colorMeshes:
-            verts = [(v.x, v.y, v.z) for v in component]
-            faces = [[i, i + 1, i + 2] for i in range(0, len(component), 3)]
-            assert trimesh.Trimesh(vertices=verts, faces=faces, process=True).is_watertight
+            faces = np.arange(len(component)).reshape(-1, 3)
+            assert trimesh.Trimesh(vertices=component, faces=faces, process=True).is_watertight
 
 
 def _totalVolume(mesh, canvas):
     vol = 0.0
     for components in mesh.meshes[:len(canvas.palette)]:
         for triangles in components:
-            if not triangles:
+            if len(triangles) == 0:
                 continue
-            verts = [(v.x, v.y, v.z) for v in triangles]
-            faces = [[i, i + 1, i + 2] for i in range(0, len(triangles), 3)]
-            vol += abs(trimesh.Trimesh(vertices=verts, faces=faces, process=True).volume)
+            faces = np.arange(len(triangles)).reshape(-1, 3)
+            vol += abs(trimesh.Trimesh(vertices=triangles, faces=faces, process=True).volume)
     return vol
 
 
@@ -345,34 +343,3 @@ def test_toggling_fast_preview_forces_a_recompute_even_with_nothing_else_changed
     # If _checkForUpdate missed the flag flip, _calculateMesh would have
     # no-op'd and left fastPreviewCache at its old value.
     assert mesh.fastPreviewCache is True
-
-
-def test_pack_unpack_meshes_round_trips(two_color_canvas):
-    # _packMeshes/unpackMeshes exist purely to make the process-pool round
-    # trip cheap (see ProjectController._MeshWorker) - a numpy array
-    # pickles far faster than a list of individual Vector3 objects, but
-    # only if the round trip actually reproduces the same triangle data.
-    two_color_canvas.layers[:] = 1
-    meshes, warnings = computeMeshData(
-        two_color_canvas.map, two_color_canvas.layers, len(two_color_canvas.palette),
-        False, True, 0, 0.12, 0.1, 0.10,
-    )
-
-    roundTripped = unpackMeshes(_packMeshes(meshes))
-
-    assert len(roundTripped) == len(meshes)
-    for originalComponents, roundTrippedComponents in zip(meshes, roundTripped):
-        assert len(originalComponents) == len(roundTrippedComponents)
-        for originalTriangles, roundTrippedTriangles in zip(originalComponents, roundTrippedComponents):
-            assert len(originalTriangles) == len(roundTrippedTriangles)
-            for a, b in zip(originalTriangles, roundTrippedTriangles):
-                # float32 in the packed form, not exact - close enough that
-                # no visible difference survives at this geometry's scale.
-                assert a.x == pytest.approx(b.x, abs=1e-5)
-                assert a.y == pytest.approx(b.y, abs=1e-5)
-                assert a.z == pytest.approx(b.z, abs=1e-5)
-
-
-def test_pack_unpack_meshes_handles_an_empty_component():
-    roundTripped = unpackMeshes(_packMeshes([[[]]]))
-    assert roundTripped == [[[]]]

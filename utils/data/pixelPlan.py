@@ -1,5 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass, field
+from functools import cached_property
 
 import numpy as np
 
@@ -72,14 +73,19 @@ class PixelPlan:
     def position(self):
         return self.y, self.x
 
-    @property
+    # cached_property, not property: fused/bulged are only ever mutated
+    # while a PixelPlan is being built (PixelPlanner.plan, planGrid), never
+    # after - and both of these get accessed multiple times per pixel by
+    # componentTriangles/componentTrianglesFast, each access otherwise
+    # rebuilding set(Face) and redoing the set algebra from scratch.
+    @cached_property
     def plainWalls(self):
         """Sides with a same-height, differently-colored neighbor: no fuse,
         no bulge - just a flat wall, with nothing needing clearance from
         its neighbor's identical flat wall."""
         return set(Face) - self.fused - self.bulged
 
-    @property
+    @cached_property
     def flushTubeSides(self):
         """Sides where this pixel's tube should sit flush against the grid
         boundary instead of inset: fused sides (so the two tubes' solids

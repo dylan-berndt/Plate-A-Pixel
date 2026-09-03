@@ -9,7 +9,7 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from ..data.project import Project
-from ..data.mesh import Mesh, computeMeshDataPacked, unpackMeshes
+from ..data.mesh import Mesh, computeMeshData
 from .canvasController import CanvasController
 
 # A live recompute previously ran computeMeshData() on the QThread itself -
@@ -73,21 +73,18 @@ class _MeshWorker(QThread):
         monkeypatch just this one method (to simulate failure or slowness)
         without needing to reach into a separate process to do it.
 
-        Submits computeMeshDataPacked, not computeMeshData directly - its
-        meshes come back as compact numpy arrays rather than lists of
-        individual Vector3 objects, since pickling thousands of those
-        pays their full per-instance overhead once per vertex (measured:
-        on the order of a second for a real mesh, more than the
-        computation itself), unpacked back on this side."""
+        computeMeshData's meshes are already (N, 3) numpy arrays (see
+        pixelComponents.py), not per-vertex objects, so pickling them
+        across this boundary is already close to a memcpy - no separate
+        pack/unpack step needed."""
         future = _getMeshProcessPool().submit(
-            computeMeshDataPacked,
+            computeMeshData,
             self._snapshot.map, self._snapshot.layers, len(self._snapshot.palette),
             self._viewSettings.hollow, True,
             self._viewSettings.baseMargin, self._viewSettings.tubeMargin,
             self._viewSettings.wallThickness, self._viewSettings.bulgeSize,
         )
-        packedMeshes, warnings = future.result()
-        return unpackMeshes(packedMeshes), warnings
+        return future.result()
 
     def run(self):
         mesh = Mesh()

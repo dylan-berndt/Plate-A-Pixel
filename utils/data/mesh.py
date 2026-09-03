@@ -1,6 +1,5 @@
 import numpy as np
 from .canvas import *
-from .vector import Vector3
 from .pixelPlan import planGrid, fusedPairs, diagonalPairs
 from .pixelComponents import componentTriangles, componentTrianglesFast, TUBE_MARGIN, WALL_THICKNESS, BULGE_SIZE
 
@@ -87,42 +86,6 @@ def computeMeshData(map_, layers, paletteLen, hollow, fastPreview, baseMargin, t
     return meshes, warnings
 
 
-def _packMeshes(meshes):
-    """meshes (list[list[list[Vector3]]]) with each component's triangle
-    soup packed into one (N, 3) float32 array. Pickling a numpy array is
-    close to a memcpy; pickling a list of thousands of individual Vector3
-    objects pays that object's full per-instance pickle overhead once per
-    vertex, which dominates a process-pool round trip for any mesh with a
-    real triangle count (measured: ~1.2s of pickling for ~117k triangles,
-    against ~1.4s to actually compute them) - see
-    ProjectController._MeshWorker, the only caller that needs this."""
-    return [
-        [np.array([(v.x, v.y, v.z) for v in triangles], dtype=np.float32) if triangles
-         else np.empty((0, 3), dtype=np.float32)
-         for triangles in components]
-        for components in meshes
-    ]
-
-
-def unpackMeshes(packed):
-    """Inverse of _packMeshes - back to list[list[list[Vector3]]], the
-    shape Mesh.meshes is documented and used everywhere else as.
-    .tolist() once per component, not per vertex: iterating a numpy array
-    row-by-row boxes a numpy scalar for every single x/y/z, the same
-    overhead _fastSolidFromCoverage avoids the same way."""
-    return [
-        [[Vector3(x, y, z) for x, y, z in arr.tolist()] for arr in components]
-        for components in packed
-    ]
-
-
-def computeMeshDataPacked(*args, **kwargs):
-    """computeMeshData, with its meshes packed for a cheap pickle - the
-    call target ProjectController's process pool actually submits."""
-    meshes, warnings = computeMeshData(*args, **kwargs)
-    return _packMeshes(meshes), warnings
-
-
 class Mesh:
     """Turns a Canvas's height field into one printable solid per color.
     planGrid (pixelPlan.py) classifies every cell into fused/bulged/
@@ -168,8 +131,8 @@ class Mesh:
 
         # meshes[colorIndex] is a list of components - pixels of the same
         # color don't always end up physically connected (see the
-        # "disconnected parts" warnings below); each component is a flat
-        # list of Vector3, 3 per triangle. The base plate isn't a color in
+        # "disconnected parts" warnings below); each component is an
+        # (N, 3) float array, 3 rows per triangle. The base plate isn't a color in
         # canvas.palette - it's appended as one extra entry past the real
         # colors (see _calculateMesh), so it comes back as just another
         # mesh, same as any color's.

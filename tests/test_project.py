@@ -59,11 +59,10 @@ def test_rebuild_mesh_forces_the_exact_generator_even_after_a_fast_preview_mesh_
     assert project.mesh.fastPreview is False
     for colorMeshes in project.mesh.meshes:
         for component in colorMeshes:
-            if not component:
+            if len(component) == 0:
                 continue
-            verts = [(v.x, v.y, v.z) for v in component]
             faces = [[i, i + 1, i + 2] for i in range(0, len(component), 3)]
-            assert trimesh.Trimesh(vertices=verts, faces=faces, process=True).is_watertight
+            assert trimesh.Trimesh(vertices=component, faces=faces, process=True).is_watertight
 
 
 def test_save_load_round_trip_preserves_image_layers_and_palette(tmp_path, project):

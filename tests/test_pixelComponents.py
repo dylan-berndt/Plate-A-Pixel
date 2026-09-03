@@ -4,7 +4,7 @@ import pytest
 
 from utils.data.pixelPlan import Face, PixelPlan
 from utils.data.pixelComponents import componentTriangles, componentTrianglesFast, BULGE_SIZE, TUBE_MARGIN, WALL_THICKNESS
-from utils.data.pixelComponents import _earClip, _signedArea
+from utils.data.pixelComponents import _earClip, _signedArea, _toTrimesh
 
 
 def _bounds(triangles):
@@ -16,9 +16,9 @@ def _bounds(triangles):
     # about the geometry, not bit-for-bit floats.
     r = lambda v: round(float(v), 6)
     return (
-        (r(min(v.x for v in triangles)), r(max(v.x for v in triangles))),
-        (r(min(v.y for v in triangles)), r(max(v.y for v in triangles))),
-        (r(min(v.z for v in triangles)), r(max(v.z for v in triangles))),
+        (r(triangles[:, 0].min()), r(triangles[:, 0].max())),
+        (r(triangles[:, 1].min()), r(triangles[:, 1].max())),
+        (r(triangles[:, 2].min()), r(triangles[:, 2].max())),
     )
 
 
@@ -26,7 +26,7 @@ def _volume(triangles):
     vol = 0.0
     for i in range(0, len(triangles), 3):
         a, b, c = triangles[i], triangles[i + 1], triangles[i + 2]
-        vol += a.x * (b.y * c.z - b.z * c.y) - a.y * (b.x * c.z - b.z * c.x) + a.z * (b.x * c.y - b.y * c.x)
+        vol += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])
     return vol / 6.0
 
 
@@ -37,7 +37,7 @@ def _edgeDirectionCounts(triangles):
     just duplicated (a real 2-manifold edge is used by exactly one
     triangle each way)."""
     def key(v):
-        return (round(v.x, 6), round(v.y, 6), round(v.z, 6))
+        return (round(v[0], 6), round(v[1], 6), round(v[2], 6))
 
     directed = Counter()
     for i in range(0, len(triangles), 3):
@@ -111,12 +111,12 @@ def test_isolated_tall_pixel_tube_is_inset_on_bulged_sides_and_flush_on_fused_or
 
     # The tube's own footprint is exactly the solid's cross-section at
     # y=0 (its floor), separate from the (possibly bulged) cap above it.
-    floor = [v for v in triangles if abs(v.y) < 1e-9]
+    floor = [v for v in triangles if abs(v[1]) < 1e-9]
     assert floor
-    assert max(v.x for v in floor) == pytest.approx(1.0, abs=1e-5)                     # EAST fused: flush
-    assert max(v.z for v in floor) == pytest.approx(1.0, abs=1e-5)                     # SOUTH plain wall: flush
-    assert min(v.x for v in floor) == pytest.approx(0.0 + TUBE_MARGIN, abs=1e-5)       # WEST bulged: inset
-    assert min(v.z for v in floor) == pytest.approx(0.0 + TUBE_MARGIN, abs=1e-5)       # NORTH bulged: inset
+    assert max(v[0] for v in floor) == pytest.approx(1.0, abs=1e-5)                     # EAST fused: flush
+    assert max(v[2] for v in floor) == pytest.approx(1.0, abs=1e-5)                     # SOUTH plain wall: flush
+    assert min(v[0] for v in floor) == pytest.approx(0.0 + TUBE_MARGIN, abs=1e-5)       # WEST bulged: inset
+    assert min(v[2] for v in floor) == pytest.approx(0.0 + TUBE_MARGIN, abs=1e-5)       # NORTH bulged: inset
     _assertWatertight(triangles)
 
 
@@ -126,10 +126,10 @@ def test_isolated_tall_pixel_honors_an_overridden_tube_margin():
     default = componentTriangles([plan], hollow=False)
     wider = componentTriangles([plan], hollow=False, tubeMargin=0.3)
 
-    defaultFloor = [v for v in default if abs(v.y) < 1e-9]
-    widerFloor = [v for v in wider if abs(v.y) < 1e-9]
-    assert min(v.x for v in widerFloor) > min(v.x for v in defaultFloor)
-    assert max(v.x for v in widerFloor) < max(v.x for v in defaultFloor)
+    defaultFloor = [v for v in default if abs(v[1]) < 1e-9]
+    widerFloor = [v for v in wider if abs(v[1]) < 1e-9]
+    assert min(v[0] for v in widerFloor) > min(v[0] for v in defaultFloor)
+    assert max(v[0] for v in widerFloor) < max(v[0] for v in defaultFloor)
 
 
 def test_isolated_tall_pixel_solid_tube_has_no_cavity():
@@ -172,7 +172,7 @@ def test_component_triangles_merges_two_fused_pixels_into_one_watertight_solid()
     _assertWatertight(triangles)
     # a single merged solid spanning both pixels, not two separate boxes
     # just sitting next to each other
-    xs = [v.x for v in triangles]
+    xs = triangles[:, 0]
     assert min(xs) < 0.0   # A's own west bulge
     assert max(xs) > 2.0   # B's own east bulge
 
@@ -188,10 +188,7 @@ def test_component_triangles_of_a_diagonal_pair_merges_when_bulges_overlap():
 
     triangles = componentTriangles([planA, planB], hollow=False)
 
-    import trimesh
-    verts = [(v.x, v.y, v.z) for v in triangles]
-    faces = [[i, i + 1, i + 2] for i in range(0, len(triangles), 3)]
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+    mesh = _toTrimesh(triangles)
     assert len(mesh.split(only_watertight=False)) == 1
 
 
@@ -219,8 +216,8 @@ def test_concave_l_shape_is_watertight_with_a_filled_notch():
     # the two arms' own bulges reach into the shared missing corner and
     # overlap there, so the notch isn't a sharp reflex cut - it's filled
     # out to bulgeSize past the raw grid corner.
-    assert max(v.x for v in triangles) > 2.0
-    assert max(v.z for v in triangles) > 2.0
+    assert max(v[0] for v in triangles) > 2.0
+    assert max(v[2] for v in triangles) > 2.0
 
 
 def test_concave_l_shape_tall_hollow_is_watertight():

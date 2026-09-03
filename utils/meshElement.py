@@ -76,13 +76,13 @@ def _lookAt(eye, target, up):
 
 
 def _trianglesToArrays(triangles):
-    """A flat Vector3 list (3 per triangle - see Mesh.meshes) into
-    (positions, normals) float32 arrays. Normals are flat per-triangle
-    (the same face normal repeated for all 3 corners) rather than
-    vertex-averaged - these are boxy, axis-aligned pixel solids
-    (pixelComponents.py), so a hard-edged low-poly look is the correct
-    one, not smoothed shading."""
-    positions = np.array([(v.x, v.y, v.z) for v in triangles], dtype=np.float32)
+    """An (N, 3) triangle-soup array (3 rows per triangle - see
+    Mesh.meshes) into (positions, normals) float32 arrays. Normals are
+    flat per-triangle (the same face normal repeated for all 3 corners)
+    rather than vertex-averaged - these are boxy, axis-aligned pixel
+    solids (pixelComponents.py), so a hard-edged low-poly look is the
+    correct one, not smoothed shading."""
+    positions = np.asarray(triangles, dtype=np.float32)
     normals = np.zeros_like(positions)
     for i in range(0, len(positions), 3):
         a, b, c = positions[i], positions[i + 1], positions[i + 2]
@@ -253,8 +253,10 @@ class MeshElement(QOpenGLWidget):
 
         allPositions = []
         for colorIndex, components in enumerate(mesh.meshes):
-            triangles = [v for component in components for v in component]
-            if not triangles:
+            if not components:
+                continue
+            triangles = np.concatenate(components)
+            if len(triangles) == 0:
                 continue
             positions, normals = _trianglesToArrays(triangles)
             allPositions.append(positions)
