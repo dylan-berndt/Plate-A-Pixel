@@ -36,12 +36,40 @@ when to redraw. It never calls into `utils/data/` directly.
   wants RGB rows.
 - **`Mesh`** (`mesh.py`, `pixelPlan.py`, `pixelComponents.py`) — turns
   `Canvas.map`/`.layers` into one printable solid per color via
-  `PixelPlanner`/`Pixel`/`componentTriangles`. Recomputes only when its
-  cached copy of `map`/`layers`/`hollow`/`baseMargin` actually changed.
+  `PixelPlanner`/`componentTriangles`. Recomputes only when its cached
+  copy of `map`/`layers`/`hollow`/`fastPreview`/`baseMargin`/`tubeMargin`/
+  `wallThickness`/`bulgeSize` actually changed. `fastPreview` swaps in
+  `componentTrianglesFast` - much cheaper but not actually watertight
+  (see its own docstring), used only by the live-viewport background
+  worker (`ProjectController._MeshWorker`); export always forces a fresh
+  recompute with it off (`Project.rebuildMesh`). The next three are
+  passed straight through to `componentTriangles` (see
+  `pixelComponents.py`'s `TUBE_MARGIN`/`WALL_THICKNESS`/`BULGE_SIZE`
+  constants, which are now just their defaults, not the only values in
+  play) - world-unit fractions of one grid cell, not millimeters.
+  `componentTriangles(plans, hollow, tubeMargin, wallThickness,
+  bulgeSize)` takes one physically-connected group's `PixelPlan`s
+  directly (`_calculateMesh` groups plans via union-find on `fused`/
+  diagonal connectivity, same as before) and builds its cap and tube as
+  hull extrusions read straight off each plan's already-computed
+  fused/bulged/flush classification - fused sides are traced as interior
+  (no wall), bulged sides bulge, plainWalls stay flush - then dog-ear
+  triangulates and extrudes. Boolean CSG is used only to combine a
+  handful of already-simplified pieces (a hole cut from a hull, cavities
+  cut from the tube, or the final cap+tube union), not per pixel; this
+  replaced an earlier version that built one box per pixel and
+  boolean-unioned the whole group, which didn't scale past a few thousand
+  pixels in one component (e.g. the auto-generated base plate on a large
+  canvas). A rare topological ambiguity - two pixels touching only at one
+  grid corner with no shared edge (diagonal pixels whose bulges overlap,
+  no fusing) - falls back to the old per-pixel-box-plus-union approach
+  for just that group; real usage essentially never hits it, since the
+  base plate already occupies both of a diagonal pair's flanking cells.
 - **`Project`** (`project.py`) — one open document: a `Canvas` + its
   `Palette` + a `Mesh` + `ViewSettings` (`hollow`, `baseMargin`,
-  `cellWidth`, `cellHeight` in mm) + `filePath` (where it was last
-  loaded from/saved to, `None` if never saved) + `name`.
+  `cellWidth`, `cellHeight` in mm, `tubeMargin`, `wallThickness`,
+  `bulgeSize`) + `filePath` (where it was last loaded from/saved to,
+  `None` if never saved) + `name`.
   - `Project.save(filePath)` / `Project.load(filePath)` round-trip a
     single `*.pap` zip bundle: `image.png` (the reduced image),
     `layers.npy`, and `project.json` (palette colors/names, view
@@ -205,6 +233,7 @@ why a same-signature passthrough here would add nothing):
 | `transformSelectionLayer(delta)` | `with projectController.editing(affectsMesh=True):` |
 | `setHollow(hollow)` | `with projectController.editing(affectsMesh=True):` |
 | `setMargin(margin)` | `with projectController.editing(affectsMesh=True):` |
+| `setTubeMargin(value)`, `setWallThickness(value)`, `setBulgeSize(value)` | `with projectController.editing(affectsMesh=True):` — these do change `Mesh`'s triangles (see `componentTriangles` in `pixelComponents.py`), unlike `cellWidth`/`cellHeight` below |
 | `setCellWidth(mm)`, `setCellHeight(mm)` | `with projectController.editing(signal=projectController.viewSettingsChanged):` — export-only scale, so `affectsMesh` doesn't apply here; these never touch `Mesh`'s own unit-based triangles |
 | `renameColor(index, name)`, `recolorColor(index, rgb)` | `with projectController.editing(signal=projectController.paletteChanged):` |
 

@@ -60,6 +60,36 @@ def test_set_margin_updates_view_settings_and_rebuilds_mesh(controller):
     assert len(ready) == 1
 
 
+def test_set_tube_margin_updates_view_settings_and_rebuilds_mesh(controller):
+    ready = spy(controller.meshReady)
+
+    controller.canvasController.setTubeMargin(0.2)
+    waitForMeshWorker(controller)
+
+    assert controller.project.viewSettings.tubeMargin == 0.2
+    assert len(ready) == 1
+
+
+def test_set_wall_thickness_updates_view_settings_and_rebuilds_mesh(controller):
+    ready = spy(controller.meshReady)
+
+    controller.canvasController.setWallThickness(0.25)
+    waitForMeshWorker(controller)
+
+    assert controller.project.viewSettings.wallThickness == 0.25
+    assert len(ready) == 1
+
+
+def test_set_bulge_size_updates_view_settings_and_rebuilds_mesh(controller):
+    ready = spy(controller.meshReady)
+
+    controller.canvasController.setBulgeSize(0.3)
+    waitForMeshWorker(controller)
+
+    assert controller.project.viewSettings.bulgeSize == 0.3
+    assert len(ready) == 1
+
+
 def test_set_cell_width_does_not_touch_the_mesh(controller):
     invalidated = spy(controller.meshInvalidated)
     ready = spy(controller.meshReady)

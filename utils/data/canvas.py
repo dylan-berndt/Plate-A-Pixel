@@ -39,44 +39,17 @@ class Canvas:
 
     @staticmethod
     def detectScale(image: np.array):
-        maxScale = 1
-        baseImage = image
-        xGrid, yGrid = np.meshgrid(np.arange(baseImage.shape[1]), np.arange(baseImage.shape[0]))
-        for i in range(2, 101):
-            if image.shape[0] // i != image.shape[0] / i or image.shape[1] // i != image.shape[1] / i:
-                continue
-
-            if i >= image.shape[0] or i >= image.shape[1]:
-                break
-            
-            # Nearest neighbor sampling to get reference color without blurring
-            sampleMask = np.logical_and(yGrid % i == i // 2, xGrid % i == i // 2)
-            sampled = image[sampleMask]
-            
-            # Sample a block of the pixels that we assume should be the same color
-            blurGrid = np.stack([yGrid // i, xGrid // i], axis=-1)
-            # Flat array with the grid index of each pixel
-            values, gridIndices = np.unique(blurGrid.reshape(-1, 2), return_inverse=True, axis=0)
-            # Blurring produces a different size image than the sampling
-            if values.shape[0] != sampled.reshape(-1, image.shape[-1]).shape[0]:
-                continue
-            
-            # Empty array to store the blurred values
-            blurred = np.zeros([values.shape[0], image.shape[-1]])
-            
-            np.add.at(blurred, gridIndices, image.reshape(-1, image.shape[-1]))
-            blurred = blurred / (i * i)
-            
-            # If all pixels in the grid-blurred image are the same as the reference pixel
-            # for every reference pixel, no actual blurring of colors has occured and
-            # we can assume that our current grid size is valid
+        h, w = image.shape[:2]
+        g = np.gcd(h, w)
+        for i in sorted((d for d in range(1, g + 1) if g % d == 0), reverse=True):
+            if i == 1:
+                return image, 1
+            blocks = image.reshape(h // i, i, w // i, i, -1)
+            sampled = blocks[:, i // 2, :, i // 2, :]
+            blurred = blocks.mean(axis=(1, 3))
             if np.allclose(sampled, blurred):
-                baseImage = sampled
-                maxScale = i
-                
-            baseImage = baseImage.reshape(image.shape[0] // maxScale, image.shape[1] // maxScale, image.shape[-1])
-
-        return baseImage, maxScale
+                return sampled, i
+        return image, 1
 
 
     # Raw image import - one entry point alongside Project.load for opening
@@ -139,7 +112,10 @@ class Canvas:
         if mode == "replace":
             self.selection = selection
         elif mode == "subtract":
-            self.selection = np.logical_xor(self.selection, selection)
+            # AND-NOT, not XOR: XOR toggles, so a cell in `selection` that
+            # wasn't already selected would flip on instead of staying
+            # unselected - subtraction should only ever turn cells off.
+            self.selection = np.logical_and(self.selection, np.logical_not(selection))
         elif mode == "add":
             self.selection = np.logical_or(self.selection, selection)
         elif mode == "intersect":

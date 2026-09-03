@@ -53,6 +53,18 @@ class CanvasController:
         with self.projectController.editing(affectsMesh=True):
             self.project.viewSettings.baseMargin = margin
 
+    def setTubeMargin(self, value):
+        with self.projectController.editing(affectsMesh=True):
+            self.project.viewSettings.tubeMargin = value
+
+    def setWallThickness(self, value):
+        with self.projectController.editing(affectsMesh=True):
+            self.project.viewSettings.wallThickness = value
+
+    def setBulgeSize(self, value):
+        with self.projectController.editing(affectsMesh=True):
+            self.project.viewSettings.bulgeSize = value
+
     # -- export-only view settings (no mesh geometry change) -------------
     # cellWidth/cellHeight only scale coordinates on export (objExport) -
     # Mesh's own triangles are unit-based and don't depend on either, so

@@ -1,5 +1,11 @@
 PySide6
+PyOpenGL
 numpy
 pillow
 trimesh
 manifold3d
+# trimesh.graph (used internally by some boolean-union configurations -
+# see e.g. diagonal same-color pixels whose bulges overlap) needs a graph
+# engine backend; without one it raises ImportError deep inside the mesh
+# worker thread (see ProjectController._MeshWorker).
+scipy

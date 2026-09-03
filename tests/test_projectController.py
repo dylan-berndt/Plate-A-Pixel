@@ -1,8 +1,12 @@
 import pytest
+from PySide6.QtTest import QTest
 
+from utils.data.canvas import Canvas
 from utils.data.mesh import Mesh
+from utils.data.project import Project, ViewSettings
 from utils.controllers.canvasController import CanvasController
-from .fixtures import RED_BLOCK, RED_ISLAND
+from utils.controllers.projectController import ProjectController, _MeshWorker
+from .fixtures import RED_BLOCK, RED_ISLAND, make_pixel_art
 from .conftest import waitForMeshWorker, spy
 
 
@@ -175,3 +179,121 @@ def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
 def test_project_controller_owns_a_canvas_controller(controller):
     assert isinstance(controller.canvasController, CanvasController)
     assert controller.canvasController.project is controller.project
+
+
+def test_a_failing_mesh_computation_does_not_wedge_the_pipeline(controller, monkeypatch):
+    # A worker whose computation raises (e.g. a trimesh boolean op needing
+    # a graph engine backend that isn't installed, or the worker process
+    # itself dying) must not leave _meshWorker permanently set - every
+    # future rebuildMesh() call would otherwise just queue behind a worker
+    # that has already died, silently going stale forever with no visible
+    # sign why. Patches _MeshWorker's own method rather than
+    # Mesh._calculateMesh - the real computation now runs in a separate
+    # process (see projectController.py), which a patch in this process's
+    # Mesh class can't reach.
+    def alwaysFails(self):
+        raise RuntimeError("simulated computation failure")
+
+    monkeypatch.setattr(_MeshWorker, "_computeMeshData", alwaysFails)
+
+    ready = spy(controller.meshReady)
+    controller.canvasController.setMargin(1)
+    waitForMeshWorker(controller)
+
+    assert controller._meshWorker is None
+    assert len(ready) == 1
+    assert controller.project.mesh.meshes == []
+
+    # the pipeline must still work for the next edit, once computation
+    # can actually succeed again
+    monkeypatch.undo()
+    controller.canvasController.setMargin(2)
+    waitForMeshWorker(controller)
+
+    assert controller._meshWorker is None
+    assert len(ready) == 2
+
+
+# -- rebuildMesh() debouncing --------------------------------------------
+# The shared `controller` fixture zeroes MESH_DEBOUNCE_MS so every other
+# test above keeps its old "one edit -> one recompute" behavior. These
+# build their own controller with a small but real, non-zero window
+# instead, to test the debouncing itself - see ProjectController's class
+# docstring for why it exists (mashing a layer's "+" button visibly
+# stutters if every click starts its own recompute).
+
+@pytest.fixture
+def debounced_controller():
+    canvas = Canvas(make_pixel_art())
+    project = Project(canvas, viewSettings=ViewSettings(hollow=False, baseMargin=0))
+    c = ProjectController(project)
+    c._meshDebounceTimer.setInterval(60)
+    yield c
+    c._meshDebounceTimer.stop()
+    if c._meshWorker is not None:
+        c._meshWorker.wait()
+
+
+def test_a_burst_of_edits_within_the_debounce_window_produces_one_recompute(debounced_controller):
+    ready = spy(debounced_controller.meshReady)
+    invalidated = spy(debounced_controller.meshInvalidated)
+
+    for margin in (1, 2, 3):
+        debounced_controller.canvasController.setMargin(margin)
+        QTest.qWait(10)  # well under the 60ms window - still one burst
+
+    # meshInvalidated still fires per-edit (immediate stale feedback), but
+    # nothing has actually started yet - the debounce window hasn't
+    # elapsed since the last edit.
+    assert len(invalidated) == 3
+    assert debounced_controller._meshWorker is None
+    assert len(ready) == 0
+
+    waitForMeshWorker(debounced_controller)
+
+    # one recompute, reflecting the *last* edit (margin=3), not one per click
+    assert len(ready) == 1
+    assert debounced_controller.project.viewSettings.baseMargin == 3
+
+
+def test_edits_spaced_out_past_the_debounce_window_each_get_their_own_recompute(debounced_controller):
+    ready = spy(debounced_controller.meshReady)
+
+    debounced_controller.canvasController.setMargin(1)
+    waitForMeshWorker(debounced_controller)
+    debounced_controller.canvasController.setMargin(2)
+    waitForMeshWorker(debounced_controller)
+
+    # debouncing only coalesces edits *within* the window - it doesn't
+    # suppress or merge recomputes that were already, genuinely separate.
+    assert len(ready) == 2
+
+
+def test_an_edit_that_lands_while_the_previous_worker_is_still_running_still_gets_picked_up(
+    debounced_controller, monkeypatch
+):
+    # A tiny test canvas computes fast enough that the first worker could
+    # plausibly finish (and its queued meshComputed could even be
+    # delivered, since qWait below pumps events) before this gets a chance
+    # to check - so make it artificially slow instead of racing a real one.
+    # Patches _MeshWorker's own method rather than Mesh._calculateMesh -
+    # see test_a_failing_mesh_computation_does_not_wedge_the_pipeline for why.
+    realComputeMeshData = _MeshWorker._computeMeshData
+
+    def slowComputeMeshData(self):
+        import time
+        time.sleep(0.1)
+        return realComputeMeshData(self)
+
+    monkeypatch.setattr(_MeshWorker, "_computeMeshData", slowComputeMeshData)
+    ready = spy(debounced_controller.meshReady)
+
+    debounced_controller.canvasController.setMargin(1)
+    QTest.qWait(80)  # past the 60ms debounce window - the first worker has started...
+    assert debounced_controller._meshWorker is not None  # ...and is still in its 100ms sleep
+    debounced_controller.canvasController.setMargin(2)  # arrives while it's still running
+
+    waitForMeshWorker(debounced_controller)
+
+    assert len(ready) == 2
+    assert debounced_controller.project.viewSettings.baseMargin == 2

@@ -1,18 +1,46 @@
+import atexit
+import sys
+import traceback
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from ..data.project import Project
-from ..data.mesh import Mesh
+from ..data.mesh import Mesh, computeMeshData
 from .canvasController import CanvasController
+
+# A live recompute previously ran computeMeshData() on the QThread itself -
+# off the *thread* the UI runs on, but still inside the same process, so it
+# still held the GIL against the main thread's own Python/Qt work for its
+# entire duration (CPython only hands the GIL to a waiting thread between
+# bytecode instructions, and a single manifold3d CSG call - or a long run of
+# pure-Python loops - doesn't yield it at all until it returns). A separate
+# process has its own GIL, so submitting the real work there and blocking
+# this thread on the result (a blocking wait releases the GIL properly,
+# same as any other blocking I/O) leaves the main thread fully free for the
+# whole computation, not just between calls into it.
+#
+# One shared, lazily-started, single-worker pool (not one per project or
+# per recompute) - starting a process costs real time, so this pays that
+# cost once per app run rather than once per edit.
+_meshProcessPool = None
+
+
+def _getMeshProcessPool():
+    global _meshProcessPool
+    if _meshProcessPool is None:
+        _meshProcessPool = ProcessPoolExecutor(max_workers=1)
+        atexit.register(_meshProcessPool.shutdown, cancel_futures=True)
+    return _meshProcessPool
 
 
 class _CanvasSnapshot:
-    """A frozen stand-in for Canvas carrying only what Mesh._calculateMesh
+    """A frozen stand-in for Canvas carrying only what computeMeshData
     actually reads (map, layers, len(palette)). Built once when a rebuild
-    is requested so the background thread computing it never touches the
+    is requested so the worker process computing it never touches the
     live Canvas, which may keep changing while that computation runs."""
 
     def __init__(self, canvas):
@@ -22,23 +50,66 @@ class _CanvasSnapshot:
 
 
 class _MeshWorker(QThread):
-    """Runs one Mesh._calculateMesh() off the UI thread against a frozen
-    snapshot, then hands the finished Mesh back via a queued signal."""
+    """Runs one mesh recompute off the UI thread against a frozen
+    snapshot, then hands the finished Mesh back via a queued signal.
+    Always computes with fastPreview on - the live viewport doesn't need
+    (and can't afford, per-edit) a mesh that's actually watertight; export
+    forces a fresh, exact recompute of its own (see Project.rebuildMesh)."""
 
     meshComputed = Signal(object)  # Mesh
 
-    def __init__(self, snapshot, hollow, baseMargin, parent=None):
+    def __init__(self, snapshot, viewSettings, parent=None):
         super().__init__(parent)
         self._snapshot = snapshot
-        self._hollow = hollow
-        self._baseMargin = baseMargin
+        # A plain-dataclass copy (see rebuildMesh) - cellWidth/cellHeight
+        # ride along unused (export-only, see objExport.py) but a whole
+        # ViewSettings is simpler to carry than an ever-growing list of
+        # individual mesh-geometry parameters.
+        self._viewSettings = viewSettings
+
+    def _computeMeshData(self):
+        """Submits the real computation to the shared worker process and
+        blocks for its result - split out from run() so tests can
+        monkeypatch just this one method (to simulate failure or slowness)
+        without needing to reach into a separate process to do it.
+
+        computeMeshData's meshes are already (N, 3) numpy arrays (see
+        pixelComponents.py), not per-vertex objects, so pickling them
+        across this boundary is already close to a memcpy - no separate
+        pack/unpack step needed."""
+        future = _getMeshProcessPool().submit(
+            computeMeshData,
+            self._snapshot.map, self._snapshot.layers, len(self._snapshot.palette),
+            self._viewSettings.hollow, True,
+            self._viewSettings.baseMargin, self._viewSettings.tubeMargin,
+            self._viewSettings.wallThickness, self._viewSettings.bulgeSize,
+        )
+        return future.result()
 
     def run(self):
         mesh = Mesh()
         mesh.canvas = self._snapshot
-        mesh.hollow = self._hollow
-        mesh.baseMargin = self._baseMargin
-        mesh._calculateMesh()
+        mesh.hollow = self._viewSettings.hollow
+        mesh.fastPreview = True
+        mesh.baseMargin = self._viewSettings.baseMargin
+        mesh.tubeMargin = self._viewSettings.tubeMargin
+        mesh.wallThickness = self._viewSettings.wallThickness
+        mesh.bulgeSize = self._viewSettings.bulgeSize
+        try:
+            mesh._refreshCaches()
+            mesh.meshes, mesh.warnings = self._computeMeshData()
+        except Exception:
+            # An exception here (e.g. trimesh hitting a boolean-op case
+            # its installed backends can't handle, or the worker process
+            # itself dying) must never be silently swallowed and left
+            # there: without this, meshComputed never fires,
+            # self._meshWorker (in ProjectController) never clears, and
+            # every future rebuildMesh() call just queues behind a worker
+            # that has already died - the mesh view goes stale forever
+            # with no visible sign why. Emitting the still-empty Mesh
+            # keeps the pipeline alive; the traceback at least says why
+            # nothing's there instead of nothing at all.
+            traceback.print_exc(file=sys.stderr)
         self.meshComputed.emit(mesh)
 
 
@@ -48,47 +119,47 @@ class ProjectController(QObject):
     a QWidget.
 
     Undo is a plain stack of whole-state snapshots (layers, selection,
-    palette, view settings) - there isn't enough data in a Project to
-    justify a command pattern with a do/undo pair per operation. Every
-    mutating method (here, on canvasController, and on the Tool
-    subclasses) pushes one snapshot before it acts via pushUndo(), usually
-    through the editing() context manager below; undo()/redo() pop a
-    snapshot and restore it wholesale, then just re-emit everything rather
-    than tracking what specifically changed. Whether undo/redo are
-    currently available is for the view to check (canUndo/canRedo) - no
-    signal fires just for that.
+    palette, view settings) rather than a command pattern - there isn't
+    enough data in a Project to justify one. Every mutating method pushes
+    one snapshot via pushUndo() (usually through editing() below);
+    undo()/redo() pop a snapshot and restore it wholesale, re-emitting
+    everything rather than tracking what changed. canUndo/canRedo are
+    polled by the view - no signal fires just for that.
 
-    A multi-call gesture (a tool's onPress/onDrag/.../onRelease sequence)
-    should undo as one step, not one step per call - beginGesture()/
-    endGesture() bracket that: only the first pushUndo() inside a
-    gesture actually pushes a snapshot, so a BrushSelectTool drag calling
-    editing() fifty times still costs one undo entry.
+    A multi-call gesture (onPress/onDrag/.../onRelease) should undo as
+    one step - beginGesture()/endGesture() bracket that, so only the
+    first pushUndo() inside a gesture actually pushes a snapshot.
 
     Mesh recomputation runs on a background QThread (~0.6s for a full
     image is long enough to visibly stall the UI otherwise): calling
     rebuildMesh() fires meshInvalidated immediately, then meshReady(mesh)
-    once the worker finishes. If another edit arrives while a computation
-    is already running, only the latest request is kept and started when
-    the current one finishes - a burst of edits collapses into a single
-    follow-up recompute rather than queuing one per edit.
+    once the worker finishes. Starting the actual computation is debounced
+    (MESH_DEBOUNCE_MS) rather than immediate - CPython's GIL means the
+    computation and the UI's own rendering callbacks still take turns on
+    one core, so a chain of rebuilds (e.g. mashing a layer's "+" button)
+    visibly stutters if each edit starts its own recompute immediately.
+    Repeated edits within the window replace the pending request and push
+    the start back, so a burst collapses into one recompute; a computation
+    already running when the window elapses finishes on its own and picks
+    up the latest pending request itself (see _onMeshComputed).
 
     This class owns no editing methods of its own - it's the shared
     infrastructure (undo stack, editing(), the mesh worker, save/dirty
-    state) that everything else edits through, not a second command
-    surface competing with canvasController. Every actual edit
-    (selection, height, hollow/margin, cell scale, palette naming) lives
-    on canvasController (CanvasController) or, for selection, directly on
-    the FunctionalTool subclasses in ..tools - both call back into
-    editing()/pushUndo()/rebuildMesh() here to stay on this same undo
-    stack and mesh pipeline rather than owning their own. Turning a click
-    into one of those calls isn't this class's job either - see
-    ToolController in this package."""
+    state) that canvasController and the FunctionalTool subclasses in
+    ..tools edit through, so they share one undo stack and mesh pipeline.
+    Turning a click into one of those calls is ToolController's job."""
 
     selectionChanged = Signal()
     paletteChanged = Signal()
     viewSettingsChanged = Signal()
     meshInvalidated = Signal()
     meshReady = Signal(object)  # Mesh
+
+    # How long rebuildMesh() waits for edits to stop arriving before it
+    # actually starts a worker - see the class docstring. Tests that want
+    # rebuildMesh()'s old fire-immediately behavior set this to 0 (see the
+    # `controller` fixture in conftest.py).
+    MESH_DEBOUNCE_MS = 250
 
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
@@ -100,6 +171,10 @@ class ProjectController(QObject):
         self._dirty = False
         self._meshWorker = None
         self._pendingMeshRequest = None
+        self._meshDebounceTimer = QTimer(self)
+        self._meshDebounceTimer.setSingleShot(True)
+        self._meshDebounceTimer.setInterval(self.MESH_DEBOUNCE_MS)
+        self._meshDebounceTimer.timeout.connect(self._onMeshDebounceElapsed)
 
     # -- undo/redo ------------------------------------------------------
 
@@ -201,32 +276,49 @@ class ProjectController(QObject):
         self._dirty = False
 
     def rebuildMesh(self):
-        """Recompute the mesh on a background thread from the project's
-        current state - called by canvasController after any edit that
-        can change mesh geometry (height, hollow, baseMargin)."""
+        """Recompute the mesh from the project's current state - called by
+        canvasController after any edit that can change mesh geometry
+        (height, hollow, baseMargin, tubeMargin, wallThickness, bulgeSize).
+        Invalidates immediately but debounces the actual worker start - see
+        the class docstring."""
         self.meshInvalidated.emit()
-        request = (
-            _CanvasSnapshot(self.project.canvas),
-            self.project.viewSettings.hollow,
-            self.project.viewSettings.baseMargin,
-        )
-        if self._meshWorker is not None:
-            self._pendingMeshRequest = request
+        self._pendingMeshRequest = (_CanvasSnapshot(self.project.canvas), replace(self.project.viewSettings))
+        self._meshDebounceTimer.start()
+
+    def _onMeshDebounceElapsed(self):
+        if self._pendingMeshRequest is None:
             return
+        if self._meshWorker is not None:
+            # A worker from before this window is still running -
+            # _onMeshComputed starts the pending request itself once it
+            # finishes (it checks isActive() on this same timer).
+            return
+        request, self._pendingMeshRequest = self._pendingMeshRequest, None
         self._startMeshWorker(request)
 
     def _startMeshWorker(self, request):
-        snapshot, hollow, baseMargin = request
-        self._meshWorker = _MeshWorker(snapshot, hollow, baseMargin, parent=self)
+        snapshot, viewSettings = request
+        self._meshWorker = _MeshWorker(snapshot, viewSettings, parent=self)
         self._meshWorker.meshComputed.connect(self._onMeshComputed)
         self._meshWorker.start()
 
     def _onMeshComputed(self, mesh):
         self.project.mesh = mesh
         worker, self._meshWorker = self._meshWorker, None
+        # Qt's "is this thread finished" bookkeeping can lag behind
+        # run() actually returning, and deleteLater()-ing a QThread Qt
+        # still considers running aborts the process (see
+        # AppController.closeProject for the same hazard on app exit).
+        # wait() is a no-op in the normal case and closes that race in
+        # the rare one.
+        worker.wait()
         worker.deleteLater()
         self.meshReady.emit(mesh)
-        if self._pendingMeshRequest is not None:
+        # Start the pending request now only if the debounce window has
+        # already elapsed (it fired while this worker was busy and left
+        # the request here) - otherwise edits are still coming in, and
+        # _onMeshDebounceElapsed will start it once they stop.
+        if self._pendingMeshRequest is not None and not self._meshDebounceTimer.isActive():
             request, self._pendingMeshRequest = self._pendingMeshRequest, None
             self._startMeshWorker(request)
 

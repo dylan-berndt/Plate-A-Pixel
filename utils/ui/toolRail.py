@@ -1,0 +1,125 @@
+import numpy as np
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QButtonGroup, QFrame
+from PySide6.QtCore import Qt
+
+from .elements import IconButton, Icons, SectionLabel, Stepper, Theme
+
+
+def selectionHeightText(canvas):
+    """What the layer-height stepper should display for the current
+    selection: the shared height when every selected cell agrees, "*"
+    when they don't (mixed selection - no single value to show), "-"
+    when nothing is selected at all."""
+    if not canvas.selection.any():
+        return "-"
+    heights = canvas.layers[canvas.selection]
+    if np.all(heights == heights[0]):
+        return str(int(heights[0]))
+    return "*"
+
+
+class ToolRail(QWidget):
+    """The left rail: tool selection (Wand/Brush - the two real tools;
+    see ARCHITECTURE.md's "explicitly not built" list for why there
+    isn't a third) and the layer-height stepper, which is the view for
+    CanvasController.transformSelectionLayer(delta) - there's no tool for
+    height, so this is the only place that edit happens from.
+
+    Needs both appController (to resolve whichever project is active at
+    click time, for the height buttons and tool switching) and
+    toolController (to switch tools and know which one is active) since
+    those live on AppController but aren't the same object."""
+
+    def __init__(self, appController, toolController, theme: Theme = None, **kwargs):
+        super().__init__(**kwargs)
+        theme = theme or Theme()
+        self._appController = appController
+        self._toolController = toolController
+        self._boundProjectController = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 14, 8, 14)
+        layout.setSpacing(8)
+        layout.setAlignment(layout.alignment())
+
+        self._toolGroup = QButtonGroup(self)
+        self._toolGroup.setExclusive(True)
+        self._toolButtons = {}
+        for name, iconBody in (("wand", Icons.WAND), ("brushSelect", Icons.BRUSH)):
+            button = IconButton(
+                iconBody, checkable=True, theme=theme,
+                onClick=(lambda checked, n=name: self._toolController.setActiveTool(n)),
+            )
+            self._toolGroup.addButton(button)
+            self._toolButtons[name] = button
+            layout.addWidget(button)
+
+        divider = QFrame()
+        divider.setFixedHeight(1.5)
+        divider.setStyleSheet(f"background: {theme.ink};")
+        layout.addWidget(divider)
+
+        layerLabel = SectionLabel("Layer", theme=theme)
+        layerLabel.setAlignment(Qt.AlignCenter)
+        layout.addWidget(layerLabel)
+        self._layerStepper = Stepper(
+            "-", onIncrement=self._raiseSelection, onDecrement=self._lowerSelection, theme=theme,
+            vertical=True,
+        )
+        layout.addWidget(self._layerStepper)
+
+        layout.addStretch(1)
+
+        self._toolController.activeToolChanged.connect(self._onActiveToolChanged)
+        self._onActiveToolChanged(self._toolController.registry.activeTool)
+
+    def _onActiveToolChanged(self, tool):
+        if tool is None:
+            return
+        button = self._toolButtons.get(tool.name)
+        if button is not None:
+            button.setChecked(True)
+
+    def _raiseSelection(self):
+        self._transformSelection(1)
+
+    def _lowerSelection(self):
+        self._transformSelection(-1)
+
+    def _transformSelection(self, delta):
+        controller = self._appController.activeController
+        if controller is None:
+            return
+        controller.canvasController.transformSelectionLayer(delta)
+
+    # -- binding to whichever project is currently active --------------
+
+    def bindProject(self, projectController):
+        if self._boundProjectController is not None:
+            self._boundProjectController.selectionChanged.disconnect(self._refreshLayerStepper)
+            self._boundProjectController.meshInvalidated.disconnect(self._refreshLayerStepper)
+        self._boundProjectController = projectController
+        if projectController is not None:
+            projectController.selectionChanged.connect(self._refreshLayerStepper)
+            # meshInvalidated, not meshReady: the "+"/"-" buttons go
+            # through editing(affectsMesh=True), which mutates
+            # canvas.layers synchronously and only *then* calls
+            # rebuildMesh() - meshInvalidated fires immediately off the
+            # back of that same call, while meshReady only fires once the
+            # debounced background worker finishes recomputing actual mesh
+            # geometry (up to MESH_DEBOUNCE_MS plus however long that
+            # computation takes - a real, visible delay on a bigger
+            # canvas). The number this stepper shows only ever reads
+            # canvas.layers directly (see selectionHeightText), which is
+            # already correct the instant the button click returns, so
+            # waiting for the mesh pipeline to catch up was just an
+            # unnecessary lag on top of already-current data.
+            projectController.meshInvalidated.connect(self._refreshLayerStepper)
+        self._refreshLayerStepper()
+
+    def _refreshLayerStepper(self):
+        if self._boundProjectController is None:
+            self._layerStepper.setText("-")
+            return
+        canvas = self._boundProjectController.project.canvas
+        self._layerStepper.setText(selectionHeightText(canvas))
