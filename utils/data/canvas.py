@@ -123,16 +123,6 @@ class Canvas:
         else:
             raise NotImplementedError("You Goober")
 
-    def wandSelect(self, color, mode="replace"):
-        if len(color) == 3:
-            colors = self.palette.colors
-            value = max([(range(len(colors))[i] if np.all(colors[i] == color) else 0) for i in range(len(colors))])
-        else:
-            value = color
-        newSelection = self.map == value
-        self.alterSelection(newSelection, mode)
-        return
-
     def bucketSelect(self, position, contiguous=True, diagonal=False, mode="replace"):
         value = self.map[position]
 
@@ -159,8 +149,8 @@ class Canvas:
 
     def brushSelect(self, position, radius, mode="replace"):
         """Every cell within `radius` of `position` (Euclidean, in grid
-        cells) - color-blind, unlike wandSelect/bucketSelect, since a
-        brush stamps an area rather than picking out one color."""
+        cells) - color-blind, unlike bucketSelect, since a brush stamps an
+        area rather than picking out one color."""
         y, x = position
         yGrid, xGrid = np.ogrid[:self.map.shape[0], :self.map.shape[1]]
         newSelection = (yGrid - y) ** 2 + (xGrid - x) ** 2 <= radius ** 2
@@ -168,12 +158,3 @@ class Canvas:
 
     def transformSelection(self, direction=1):
         self.layers[self.selection] += direction
-
-
-
-if __name__ == "__main__":
-    import sys
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication(sys.argv)
-    canvas = Canvas.loadNewCanvas()

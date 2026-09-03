@@ -2,11 +2,11 @@ from .tool import Options, FunctionalTool
 
 
 class WandTool(FunctionalTool):
-    """Click-to-select. Built on Canvas.bucketSelect rather than
-    Canvas.wandSelect - bucketSelect(contiguous=False) already selects
-    every cell matching the clicked position's color exactly like
-    wandSelect does, so "wand" and "bucket" are the same operation with
-    one option (contiguous) toggled, not two separate tools."""
+    """Click-to-select, built on Canvas.bucketSelect. There is no separate
+    "bucket" tool: bucketSelect(contiguous=False) already selects every
+    cell matching the clicked position's color exactly like a color-wand
+    pick would, so "wand" and "bucket" are the same operation with one
+    option (contiguous) toggled, not two separate tools."""
 
     def __init__(self):
         super().__init__(
