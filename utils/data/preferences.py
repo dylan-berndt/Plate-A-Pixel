@@ -37,6 +37,21 @@ COMMANDS = [
 _COMMANDS_BY_ID = {command.id: command for command in COMMANDS}
 
 
+class KeybindConflictError(ValueError):
+    """Raised by Preferences.setKeybind/resetKeybind when `sequence` is
+    already bound to a different command - Preferences enforces that two
+    commands can never share a shortcut itself, rather than leaving that
+    up to whichever caller happens to invoke setKeybind (KeymapController,
+    a test, or anything else)."""
+
+    def __init__(self, commandId, conflictingCommandId, conflictingLabel, sequence):
+        self.commandId = commandId
+        self.conflictingCommandId = conflictingCommandId
+        self.conflictingLabel = conflictingLabel
+        self.sequence = sequence
+        super().__init__(f"'{sequence}' is already bound to '{conflictingLabel}'")
+
+
 class Preferences:
     """User-level settings, round-tripped to a single small JSON file
     outside any project (see DEFAULT_PREFERENCES_PATH) - right now just
@@ -58,6 +73,13 @@ class Preferences:
     preferences on disk."""
 
     def __init__(self, keybinds: dict = None, path: str = None):
+        # Not conflict-checked here (unlike setKeybind/resetKeybind below) -
+        # every COMMANDS default is already distinct, so a bare
+        # Preferences() can't start in a conflicting state, and a saved
+        # file loaded with a genuine conflict (hand-edited, or written by
+        # some future version with different defaults) shouldn't fail to
+        # even open the app; going forward, setKeybind is what actually
+        # enforces "two commands can't share a shortcut".
         self.path = path or DEFAULT_PREFERENCES_PATH
         self.keybinds = {command.id: command.default for command in COMMANDS}
         if keybinds:
@@ -66,18 +88,39 @@ class Preferences:
     def keybind(self, commandId):
         return self.keybinds.get(commandId, "")
 
+    def conflictingCommand(self, commandId, sequence):
+        """The id of whichever *other* command is already bound to
+        `sequence`, or None. An empty `sequence` (unbound) never
+        conflicts - any number of commands can all be unbound at once."""
+        if not sequence:
+            return None
+        for otherId, otherSequence in self.keybinds.items():
+            if otherId != commandId and otherSequence == sequence:
+                return otherId
+        return None
+
     def setKeybind(self, commandId, sequence):
         """`sequence` is a Qt key-sequence string ("Ctrl+A"), or "" to
-        leave the command unbound."""
+        leave the command unbound. Raises KeybindConflictError, changing
+        nothing, if `sequence` is already bound to a different command -
+        two commands can never share a shortcut."""
         if commandId not in _COMMANDS_BY_ID:
             raise ValueError(f"Unknown command '{commandId}'")
+        conflict = self.conflictingCommand(commandId, sequence)
+        if conflict is not None:
+            raise KeybindConflictError(commandId, conflict, _COMMANDS_BY_ID[conflict].label, sequence)
         self.keybinds[commandId] = sequence
 
     def resetKeybind(self, commandId):
+        """Routed through setKeybind (not a direct dict write) so
+        resetting still enforces the same no-conflict invariant: another
+        command could have been rebound to *this* command's default
+        while it was pointed elsewhere, in which case resetting back to
+        default would collide with it."""
         command = _COMMANDS_BY_ID.get(commandId)
         if command is None:
             raise ValueError(f"Unknown command '{commandId}'")
-        self.keybinds[commandId] = command.default
+        self.setKeybind(commandId, command.default)
 
     def to_dict(self):
         return {"formatVersion": FORMAT_VERSION, "keybinds": self.keybinds}

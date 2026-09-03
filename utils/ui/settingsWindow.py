@@ -1,11 +1,11 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QKeySequenceEdit, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QKeySequenceEdit, QPushButton, QMessageBox,
 )
 from PySide6.QtGui import QKeySequence
 
 from .base import Theme
 from .elements import SectionLabel
-from ..data.preferences import COMMANDS
+from ..data.preferences import COMMANDS, KeybindConflictError
 
 
 class KeybindRow(QWidget):
@@ -17,9 +17,12 @@ class KeybindRow(QWidget):
     chord, so allowing more would just make it easy to record a sequence
     by accident.
 
-    Doesn't check for conflicts with another command's binding - a
-    plausible follow-up, not attempted here (this is a first sketch of
-    the keybind system, not the final word on it)."""
+    A rebind (or reset) that would collide with another command's current
+    shortcut is rejected by KeymapController/Preferences
+    (KeybindConflictError) rather than silently letting two commands
+    share a key - this row's job is just to catch that, tell the user
+    which command already has it, and put the field back to whatever's
+    still actually bound."""
 
     def __init__(self, command, keymapController, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -46,10 +49,28 @@ class KeybindRow(QWidget):
         layout.addWidget(resetButton)
 
     def _onEdited(self):
-        self._keymapController.setKeybind(self._command.id, self._edit.keySequence().toString())
+        sequence = self._edit.keySequence().toString()
+        try:
+            self._keymapController.setKeybind(self._command.id, sequence)
+        except KeybindConflictError as error:
+            self._revertAfterConflict(error)
 
     def _onReset(self):
-        self._keymapController.resetKeybind(self._command.id)
+        try:
+            self._keymapController.resetKeybind(self._command.id)
+        except KeybindConflictError as error:
+            self._revertAfterConflict(error)
+            return
+        self._edit.setKeySequence(QKeySequence(self._keymapController.preferences.keybind(self._command.id)))
+
+    def _revertAfterConflict(self, error: KeybindConflictError):
+        QMessageBox.warning(
+            self, "Shortcut already in use",
+            f"{error.sequence} is already bound to \"{error.conflictingLabel}\". "
+            "Choose a different shortcut, or clear that command's binding first.",
+        )
+        # Back to whatever's still actually bound - the attempted change
+        # never applied (see KeymapController.setKeybind/resetKeybind).
         self._edit.setKeySequence(QKeySequence(self._keymapController.preferences.keybind(self._command.id)))
 
 

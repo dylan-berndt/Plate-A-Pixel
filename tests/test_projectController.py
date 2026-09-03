@@ -176,6 +176,33 @@ def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
     assert controller.isDirty is False
 
 
+def test_save_auto_names_unnamed_palette_entries_first(controller, tmp_path):
+    palette = controller.project.canvas.palette
+    assert any(not entry.name for entry in palette)  # fixture starts unnamed
+
+    controller.save(str(tmp_path / "test.pap"))
+
+    assert all(entry.name for entry in palette)
+
+
+def test_save_does_not_touch_already_named_entries(controller, tmp_path):
+    controller.canvasController.renameColor(0, "My Custom Name")
+
+    controller.save(str(tmp_path / "test.pap"))
+
+    assert controller.project.canvas.palette[0].name == "My Custom Name"
+
+
+def test_save_without_a_path_raises_before_auto_naming_anything(controller):
+    palette = controller.project.canvas.palette
+
+    with pytest.raises(ValueError):
+        controller.save()
+
+    # No path to save to at all - nothing should have been touched.
+    assert all(not entry.name for entry in palette)
+
+
 def test_project_controller_owns_a_canvas_controller(controller):
     assert isinstance(controller.canvasController, CanvasController)
     assert controller.canvasController.project is controller.project

@@ -4,7 +4,7 @@ from PySide6.QtGui import QKeySequence
 
 from utils.controllers.appController import AppController
 from utils.controllers.keymapController import KeymapController
-from utils.data.preferences import Preferences, COMMANDS
+from utils.data.preferences import Preferences, COMMANDS, KeybindConflictError
 from .fixtures import make_pixel_art, RED_BLOCK, RED_ISLAND
 
 
@@ -105,3 +105,27 @@ def test_triggering_with_no_active_project_is_a_no_op():
     keymap = KeymapController(appController)
 
     keymap.actions["selectAll"].trigger()  # should not raise
+
+
+def test_set_keybind_rejects_a_conflict_and_leaves_the_actions_shortcut_alone(isolatedKeymap):
+    with pytest.raises(KeybindConflictError):
+        isolatedKeymap.setKeybind("selectAll", "Ctrl+D")
+
+    assert isolatedKeymap.actions["selectAll"].shortcut() == QKeySequence("Ctrl+A")
+    assert isolatedKeymap.actions["deselectAll"].shortcut() == QKeySequence("Ctrl+D")
+
+
+def test_set_keybind_conflict_does_not_persist_or_emit(isolatedKeymap, prefsPath):
+    # A real, successful rebind first, so the file on disk has known
+    # content the failed attempt below must not have touched.
+    isolatedKeymap.setKeybind("invertSelection", "Ctrl+Shift+I")
+    calls = []
+    isolatedKeymap.keybindsChanged.connect(lambda: calls.append(True))
+
+    with pytest.raises(KeybindConflictError):
+        isolatedKeymap.setKeybind("selectAll", "Ctrl+D")
+
+    assert len(calls) == 0
+    reloaded = Preferences.load(prefsPath)
+    assert reloaded.keybind("selectAll") == "Ctrl+A"
+    assert reloaded.keybind("invertSelection") == "Ctrl+Shift+I"  # the real edit, untouched

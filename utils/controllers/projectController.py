@@ -268,10 +268,19 @@ class ProjectController(QObject):
 
     def save(self, filePath=None):
         """Writes the project to disk, defaulting to the path it was last
-        loaded from or saved to ("Save"); pass filePath for "Save As"."""
+        loaded from or saved to ("Save"); pass filePath for "Save As".
+
+        Unlike an OBJ export (see objExport.unnamedColorIndices/
+        duplicateColorNames, still enforced by ExportDialog), a *.pap
+        save doesn't require every palette entry to already have a name -
+        canvasController.autoNameUnnamedColors() fills in anything still
+        blank right before writing (a real, undoable edit - see its own
+        docstring), so the file always saves a fully-named palette
+        without making the user do that by hand first."""
         filePath = filePath or self.project.filePath
         if filePath is None:
             raise ValueError("This project has never been saved - a filePath is required.")
+        self.canvasController.autoNameUnnamedColors()
         self.project.save(filePath)
         self._dirty = False
 

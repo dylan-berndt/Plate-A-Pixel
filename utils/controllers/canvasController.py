@@ -1,3 +1,6 @@
+from ..data.colorNaming import autoNamesForUnnamed
+
+
 class CanvasController:
     """The one place a view calls to edit a project's content: height/
     hollow/margin, export cell scale, and palette naming (selection lives
@@ -106,3 +109,18 @@ class CanvasController:
     def recolorColor(self, index, rgb):
         with self.projectController.editing(signal=self.projectController.paletteChanged):
             self.project.canvas.palette.setColor(index, rgb)
+
+    def autoNameUnnamedColors(self):
+        """Fills in a name for every currently-unnamed palette entry (see
+        colorNaming.autoNamesForUnnamed) as one real, undoable edit - a
+        no-op (no undo snapshot, no signal) if every entry already has a
+        name. Called by ProjectController.save() so a *.pap save never
+        needs every color named the way an OBJ export still does (see
+        objExport.unnamedColorIndices/duplicateColorNames, enforced by
+        ExportDialog, not here)."""
+        names = autoNamesForUnnamed(self.project.canvas.palette)
+        if not names:
+            return
+        with self.projectController.editing(signal=self.projectController.paletteChanged):
+            for index, name in names.items():
+                self.project.canvas.palette.rename(index, name)

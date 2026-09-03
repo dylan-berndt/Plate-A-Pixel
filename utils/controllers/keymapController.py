@@ -60,13 +60,20 @@ class KeymapController(QObject):
         """`sequence` is a Qt key-sequence string ("Ctrl+A"), or "" to
         leave the command unbound. Persists immediately - a rebind here
         isn't part of any project, so there's no separate "save" step
-        for the user to remember."""
+        for the user to remember. Raises KeybindConflictError (from
+        Preferences.setKeybind), changing nothing, if `sequence` is
+        already bound to a different command - it's the caller's job
+        (SettingsWindow's KeybindRow, right now) to catch that and tell
+        the user, e.g. by reverting whatever UI control they just edited."""
         self.preferences.setKeybind(commandId, sequence)
         self.preferences.save()
         self._applyShortcuts()
         self.keybindsChanged.emit()
 
     def resetKeybind(self, commandId):
+        """Same conflict behavior as setKeybind (see Preferences.
+        resetKeybind) - resetting to default can itself collide with
+        another command's current binding."""
         self.preferences.resetKeybind(commandId)
         self.preferences.save()
         self._applyShortcuts()

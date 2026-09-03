@@ -1,6 +1,6 @@
 import pytest
 
-from utils.data.preferences import Preferences, COMMANDS
+from utils.data.preferences import Preferences, COMMANDS, KeybindConflictError
 
 
 @pytest.fixture
@@ -81,3 +81,74 @@ def test_load_backfills_a_command_missing_from_an_older_saved_file(prefsPath):
     assert prefs.keybind("selectAll") == "Ctrl+Shift+A"
     assert prefs.keybind("deselectAll") == "Ctrl+D"  # backfilled from default
     assert prefs.keybind("invertSelection") == "Ctrl+I"
+
+
+# -- conflict checking -----------------------------------------------------
+
+def test_conflicting_command_is_none_when_nothing_uses_that_sequence():
+    prefs = Preferences()
+    assert prefs.conflictingCommand("selectAll", "Ctrl+Shift+Z") is None
+
+
+def test_conflicting_command_finds_the_other_command_holding_it():
+    prefs = Preferences()
+    assert prefs.conflictingCommand("selectAll", "Ctrl+D") == "deselectAll"
+
+
+def test_conflicting_command_ignores_the_commands_own_current_binding():
+    prefs = Preferences()
+    # selectAll is already "Ctrl+A" - re-setting it to the same sequence
+    # must not read as a conflict with itself.
+    assert prefs.conflictingCommand("selectAll", "Ctrl+A") is None
+
+
+def test_conflicting_command_never_flags_an_empty_sequence():
+    prefs = Preferences()
+    prefs.setKeybind("deselectAll", "")
+    assert prefs.conflictingCommand("invertSelection", "") is None
+
+
+def test_set_keybind_rejects_a_sequence_already_bound_elsewhere():
+    prefs = Preferences()
+    with pytest.raises(KeybindConflictError) as excInfo:
+        prefs.setKeybind("selectAll", "Ctrl+D")
+
+    error = excInfo.value
+    assert error.commandId == "selectAll"
+    assert error.conflictingCommandId == "deselectAll"
+    assert error.conflictingLabel == "Deselect All"
+    assert error.sequence == "Ctrl+D"
+
+
+def test_set_keybind_conflict_leaves_both_bindings_unchanged():
+    prefs = Preferences()
+    with pytest.raises(KeybindConflictError):
+        prefs.setKeybind("selectAll", "Ctrl+D")
+
+    assert prefs.keybind("selectAll") == "Ctrl+A"
+    assert prefs.keybind("deselectAll") == "Ctrl+D"
+
+
+def test_set_keybind_to_an_empty_sequence_never_conflicts_even_when_another_command_is_also_unbound():
+    prefs = Preferences()
+    prefs.setKeybind("selectAll", "")
+
+    prefs.setKeybind("deselectAll", "")  # must not raise
+
+    assert prefs.keybind("selectAll") == ""
+    assert prefs.keybind("deselectAll") == ""
+
+
+def test_reset_keybind_rejects_a_default_that_collides_with_another_commands_current_binding():
+    prefs = Preferences()
+    # Free up selectAll's default by moving it elsewhere, then let
+    # deselectAll claim it - resetting selectAll back to "Ctrl+A" must
+    # now collide with deselectAll.
+    prefs.setKeybind("selectAll", "Ctrl+Shift+A")
+    prefs.setKeybind("deselectAll", "Ctrl+A")
+
+    with pytest.raises(KeybindConflictError) as excInfo:
+        prefs.resetKeybind("selectAll")
+
+    assert excInfo.value.conflictingCommandId == "deselectAll"
+    assert prefs.keybind("selectAll") == "Ctrl+Shift+A"  # unchanged

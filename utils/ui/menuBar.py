@@ -1,8 +1,7 @@
-from PySide6.QtWidgets import QMenuBar, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QMenuBar, QFileDialog
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtCore import Signal, Qt
 
-from ..data.objExport import unnamedColorIndices
 from .base import Theme
 
 
@@ -12,12 +11,11 @@ class MenuBar(QMenuBar):
     pipeline as everything else - this class never touches a Project or
     Canvas directly.
 
-    Save is guarded: every palette entry needs a name before a project
-    can be saved, since export (see objExport.py) names each printed part
-    after its color's layer name - an unnamed color would either collide
-    with another unnamed one or produce a meaningless filename. Save
-    blocks and tells the user which colors need naming rather than saving
-    something export can't cleanly use later.
+    Save/Save As aren't guarded on unnamed colors the way Export still is
+    (see ExportDialog) - ProjectController.save() auto-names anything
+    still blank right before writing (CanvasController.
+    autoNameUnnamedColors), so there's nothing for this class to block
+    on; it just calls save() the same as any other edit path.
 
     The Edit menu's Select All / Deselect All / Invert Selection entries
     are AppController.keymapController's own QAction objects (see
@@ -108,28 +106,9 @@ class MenuBar(QMenuBar):
         if filePath:
             self._appController.openProject(filePath)
 
-    def _unnamedColors(self):
-        controller = self._appController.activeController
-        if controller is None:
-            return []
-        palette = controller.project.canvas.palette
-        return [f"color {i}" for i in unnamedColorIndices(palette)]
-
-    def _blockedByUnnamedColors(self):
-        unnamed = self._unnamedColors()
-        if not unnamed:
-            return False
-        QMessageBox.warning(
-            self, "Name every color before saving",
-            "Every palette color needs a name before this project can be saved "
-            "(export names each printed part after its color's name):\n\n"
-            + "\n".join(f"- {name}" for name in unnamed),
-        )
-        return True
-
     def _save(self):
         controller = self._appController.activeController
-        if controller is None or self._blockedByUnnamedColors():
+        if controller is None:
             return
         if controller.project.filePath is None:
             self._saveAs()
@@ -138,7 +117,7 @@ class MenuBar(QMenuBar):
 
     def _saveAs(self):
         controller = self._appController.activeController
-        if controller is None or self._blockedByUnnamedColors():
+        if controller is None:
             return
         filePath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Plate-A-Pixel Files (*.pap)")
         if filePath:

@@ -97,16 +97,37 @@ when to redraw. It never calls into `utils/data/` directly.
     intentionally not part of the format — a reload always starts clean.
   - `Project.exportObjs(dir)` writes one OBJ per mesh component, scaling
     X/Z by `cellWidth` and Y by `cellHeight` independently (`objExport.py`
-    takes both explicitly — never one uniform scale).
-- **`Command`/`COMMANDS`/`Preferences`** (`preferences.py`) — user-level
-  (not per-project) settings, currently just keybinds. `Command(id,
-  label, default)` is one bindable action's static description - a Qt
-  key-sequence string for `default`, not `QKeySequence`, since this file
-  has the same no-Qt rule as the rest of `utils/data/`; `COMMANDS` is the
-  full list (`selectAll`/`deselectAll`/`invertSelection` today - adding a
-  bindable command means adding one `Command` here, then wiring its id to
-  a handler in `KeymapController`, below). `Preferences` round-trips a
-  single small JSON file (`Preferences.load`/`.save`, defaulting to
+    takes both explicitly — never one uniform scale). Every palette
+    entry needs a real name before this can produce a sane result (see
+    `unnamedColorIndices`/`duplicateColorNames` below) - unlike
+    `Project.save`, this doesn't auto-name anything itself, so that stays
+    enforced by `ExportDialog` before it ever calls this.
+- **`classifyColor`/`autoNamesForUnnamed`** (`colorNaming.py`) — the
+  auto-naming behind `CanvasController.autoNameUnnamedColors`.
+  `classifyColor(rgb)` is a rough, deliberately approximate HSV-space
+  match to a human color family ("Red"/"Green"/"Blue"/"Brown"/... -
+  achromatic colors and brown are carved out as special cases before
+  falling through to a plain hue bucket, since a gray has no meaningful
+  hue and a brown turns out to be mostly a *value* thing, not a
+  saturation one, at an orange-ish hue - see its own docstring for why).
+  `autoNamesForUnnamed(palette)` returns `{index: name}` for every
+  currently-unnamed entry (never touching an already-named one, whether
+  hand-typed or auto-named earlier) - entries sharing a family are
+  numbered by brightness ascending ("Green 1" is the darkest green
+  present), a family with only one unnamed member skips the number
+  ("Brown", not "Brown 1"). Doesn't rename anything itself - it's a pure
+  function callers apply through `Palette.rename` so it's a real,
+  undoable edit.
+- **`Command`/`COMMANDS`/`Preferences`/`KeybindConflictError`**
+  (`preferences.py`) — user-level (not per-project) settings, currently
+  just keybinds. `Command(id, label, default)` is one bindable action's
+  static description - a Qt key-sequence string for `default`, not
+  `QKeySequence`, since this file has the same no-Qt rule as the rest of
+  `utils/data/`; `COMMANDS` is the full list (`selectAll`/`deselectAll`/
+  `invertSelection` today - adding a bindable command means adding one
+  `Command` here, then wiring its id to a handler in `KeymapController`,
+  below). `Preferences` round-trips a single small JSON file
+  (`Preferences.load`/`.save`, defaulting to
   `~/.plate_a_pixel/preferences.json` but remembering whatever path it
   was actually loaded from, so a bare `.save()` writes back to the same
   place - also what lets tests point it at a tmp file and never touch a
@@ -115,6 +136,20 @@ when to redraw. It never calls into `utils/data/` directly.
   with every `COMMANDS` entry's own default for anything a saved file
   predates, so a command added in a later version doesn't need a
   migration.
+
+  `setKeybind(commandId, sequence)` enforces that two commands can never
+  share a non-empty shortcut: `conflictingCommand(commandId, sequence)`
+  finds whichever *other* command already holds it (ignoring the
+  command's own current binding, and never flagging `""`/unbound), and
+  `setKeybind` raises `KeybindConflictError` - changing nothing - if one
+  exists. `resetKeybind` is routed through `setKeybind` rather than
+  writing the default directly, so resetting can itself raise the same
+  error (another command could have claimed this command's default while
+  it was pointed elsewhere). Not conflict-checked on load - a bare
+  `Preferences()` can't start in conflict (every `COMMANDS` default is
+  already distinct) and a saved file with a genuine conflict shouldn't
+  fail to even open the app; going forward, `setKeybind` is what actually
+  holds the invariant.
 
 ## Tool layer (`utils/tools/`)
 
@@ -227,7 +262,14 @@ undo entry.
 (or `undo`/`redo`) since the project was created or last saved, `False`
 right after `save()`. `save(filePath=None)` defaults to `project.
 filePath` (plain "Save"); pass a path explicitly for "Save As". Raises
-`ValueError` if there's no path yet and none was given.
+`ValueError` if there's no path yet and none was given - checked before
+anything else, so a doomed-to-fail call touches nothing. Otherwise,
+right before writing, calls `canvasController.autoNameUnnamedColors()`
+(see `CanvasController`'s table below) - a `*.pap` save doesn't require
+every palette entry to already have a name the way an OBJ export still
+does (`ExportDialog`'s own guard, unchanged); this is what makes that
+true regardless of which caller (`MenuBar`, a test, anything else)
+invokes `save()`.
 
 **Mesh recomputation runs on a background `QThread`** (`_MeshWorker`,
 same file) — a full image's boolean-union work (~0.6s) is long enough to
@@ -297,7 +339,12 @@ switch; triggering with no project open is just a no-op.
 `setKeybind(commandId, sequence)` / `resetKeybind(commandId)` update
 `Preferences`, call `Preferences.save()` immediately (no separate "Apply"
 step - see `SettingsWindow`), refresh every action's shortcut, and emit
-`keybindsChanged`.
+`keybindsChanged`. Both simply call the matching `Preferences` method and
+let a `KeybindConflictError` (see `Preferences.setKeybind` above)
+propagate straight out uncaught - persisting/refreshing/emitting never
+run when that happens, so a rejected rebind changes nothing here either;
+it's `SettingsWindow`'s `KeybindRow` that actually catches it and tells
+the user.
 
 ### `CanvasController` — the one place a view calls to edit a project
 
@@ -318,6 +365,7 @@ nothing):
 | `setTubeMargin(value)`, `setWallThickness(value)`, `setBulgeSize(value)` | `with projectController.editing(affectsMesh=True):` — these do change `Mesh`'s triangles (see `componentTriangles` in `pixelComponents.py`), unlike `cellWidth`/`cellHeight` below |
 | `setCellWidth(mm)`, `setCellHeight(mm)` | `with projectController.editing(signal=projectController.viewSettingsChanged):` — export-only scale, so `affectsMesh` doesn't apply here; these never touch `Mesh`'s own unit-based triangles |
 | `renameColor(index, name)`, `recolorColor(index, rgb)` | `with projectController.editing(signal=projectController.paletteChanged):` |
+| `autoNameUnnamedColors()` | `with projectController.editing(signal=projectController.paletteChanged):`, skipped entirely (no undo snapshot, no signal) if every entry already has a name — fills in every still-unnamed entry via `colorNaming.autoNamesForUnnamed` as one edit; called by `ProjectController.save()`, not tied to any UI action of its own |
 | `selectAll()`, `deselectAll()`, `invertSelection()` | `with projectController.editing(signal=projectController.selectionChanged):` — whole-canvas selection ops with no click position at all, so not a `Tool`'s job either (see `FunctionalTool.onPress`); bound to keyboard shortcuts by `KeymapController`, not a canvas click |
 
 This is also the settled home for general canvas-view operations that
@@ -372,9 +420,13 @@ concern, not domain state).
   `KeybindRow` per `Command`: a `QKeySequenceEdit` capped to a single
   chord via `setMaximumSequenceLength(1)`, plus a Reset button back to
   that command's default) - no Save/Cancel, since there's nothing
-  buffered locally to discard. Doesn't check for a rebind colliding with
-  another command's shortcut; a plausible follow-up, not attempted in
-  this first pass.
+  buffered locally to discard. A rebind or reset that collides with
+  another command's current shortcut raises `KeybindConflictError` down
+  in `Preferences` (see `KeymapController`/`Preferences` above) rather
+  than silently letting two commands share a key; `KeybindRow` catches
+  that, shows a `QMessageBox` naming the command that already has it,
+  and puts its `QKeySequenceEdit` back to whatever's still actually
+  bound.
   `MeshSettingsPanel`'s numeric fields (margin, cell width/height,
   tube margin, wall thickness, bulge size) debounce their own
   `CanvasController` calls (`_debounce`/`DEBOUNCE_MS`, separate from

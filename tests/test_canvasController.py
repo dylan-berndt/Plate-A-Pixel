@@ -194,3 +194,44 @@ def test_select_all_undo_reverts(controller):
     controller.undo()
 
     assert not controller.project.canvas.selection.any()
+
+
+def test_auto_name_unnamed_colors_fills_in_every_blank_name(controller):
+    calls = spy(controller.paletteChanged)
+    palette = controller.project.canvas.palette
+    assert any(not entry.name for entry in palette)  # fixture starts unnamed
+
+    controller.canvasController.autoNameUnnamedColors()
+
+    assert all(entry.name for entry in palette)
+    assert len(calls) == 1
+
+
+def test_auto_name_unnamed_colors_leaves_existing_names_alone(controller):
+    palette = controller.project.canvas.palette
+    controller.canvasController.renameColor(0, "My Custom Name")
+
+    controller.canvasController.autoNameUnnamedColors()
+
+    assert palette[0].name == "My Custom Name"
+
+
+def test_auto_name_unnamed_colors_is_a_no_op_when_everything_is_named(controller):
+    palette = controller.project.canvas.palette
+    for i in range(len(palette)):
+        controller.canvasController.renameColor(i, f"Color {i}")
+    calls = spy(controller.paletteChanged)
+
+    controller.canvasController.autoNameUnnamedColors()
+
+    assert len(calls) == 0
+
+
+def test_auto_name_unnamed_colors_undoes_as_one_step(controller):
+    controller.canvasController.autoNameUnnamedColors()
+
+    controller.undo()
+
+    # undo() replaces canvas.palette wholesale (see ProjectController.
+    # _restore) - re-fetch it rather than reusing a pre-undo reference.
+    assert all(not entry.name for entry in controller.project.canvas.palette)
