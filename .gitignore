@@ -2,3 +2,12 @@
 /output/
 venv
 .venv
+
+# Packaging build output (pyside6-deploy/Nuitka, Inno Setup) - see
+# packaging/installer.iss and its own header comment for the full flow.
+/dist/
+/build/
+*.dist/
+*.build/
+*.onefile-build/
+/packaging/Output/
