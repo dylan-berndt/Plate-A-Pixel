@@ -154,6 +154,7 @@ class ProjectController(QObject):
     viewSettingsChanged = Signal()
     meshInvalidated = Signal()
     meshReady = Signal(object)  # Mesh
+    nameChanged = Signal()
 
     # How long rebuildMesh() waits for edits to stop arriving before it
     # actually starts a worker - see the class docstring. Tests that want
@@ -276,13 +277,22 @@ class ProjectController(QObject):
         canvasController.autoNameUnnamedColors() fills in anything still
         blank right before writing (a real, undoable edit - see its own
         docstring), so the file always saves a fully-named palette
-        without making the user do that by hand first."""
+        without making the user do that by hand first.
+
+        Project.save also renames the project to match filePath - always
+        emitting nameChanged here rather than only when the name actually
+        changed keeps this simple (a view re-deriving its own display
+        from the current name, like AppWindow._rebuildTabs, doesn't care
+        whether it's redundant) and correct in both directions: a "Save
+        As" to a new name needs it, and a plain "Save" reusing the same
+        path is a no-op rename that just re-confirms nothing changed."""
         filePath = filePath or self.project.filePath
         if filePath is None:
             raise ValueError("This project has never been saved - a filePath is required.")
         self.canvasController.autoNameUnnamedColors()
         self.project.save(filePath)
         self._dirty = False
+        self.nameChanged.emit()
 
     def rebuildMesh(self):
         """Recompute the mesh from the project's current state - called by

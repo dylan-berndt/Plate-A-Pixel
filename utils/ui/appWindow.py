@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter, QStackedLayout,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter, QStackedLayout, QMessageBox,
 )
 from PySide6.QtCore import Qt
 
@@ -64,6 +64,7 @@ class AppWindow(QMainWindow):
         self._menuBar = MenuBar(appController, theme=self.theme)
         self._menuBar.exportRequested.connect(self._onExportRequested)
         self._menuBar.settingsRequested.connect(self._onSettingsRequested)
+        self._menuBar.closeActiveTabRequested.connect(self._closeActiveTabFromMenu)
         self.setMenuBar(self._menuBar)
 
         central = QWidget()
@@ -314,7 +315,20 @@ class AppWindow(QMainWindow):
         self._appController.setActiveProject(index)
 
     def _closeTab(self, index):
+        if not (0 <= index < len(self._appController.projectControllers)):
+            return
+        controller = self._appController.projectControllers[index]
+        if not self._confirmDiscardingChanges(controller):
+            return
         self._appController.closeProject(index)
+
+    def _closeActiveTabFromMenu(self):
+        """File > Close Tab - see MenuBar.closeActiveTabRequested's own
+        docstring for why this, not AppController.closeProject directly,
+        is what that action is wired to."""
+        controller = self._appController.activeController
+        if controller is not None:
+            self._closeTab(self._appController.projectControllers.index(controller))
 
     def _rebuildTabs(self):
         activeController = self._appController.activeController
@@ -324,6 +338,58 @@ class AppWindow(QMainWindow):
         ]
         self._tabBar.setTabs(entries)
 
+    # -- unsaved-changes confirmation -------------------------------------
+
+    def _confirmDiscardingChanges(self, controller):
+        """Asks before losing `controller`'s unsaved changes - used
+        everywhere a project can be closed (a single tab, via either the
+        tab strip's own close button or File > Close Tab, and the whole
+        window - see closeEvent below). Returns True if it's fine to
+        proceed (nothing was dirty, the user chose Discard, or a chosen
+        Save actually went through) - False if the user cancelled or a
+        prompted Save As was itself cancelled, meaning the caller must
+        abort whatever it was about to do rather than lose anything."""
+        if not controller.isDirty:
+            return True
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Unsaved Changes")
+        box.setText(f'"{controller.project.name}" has unsaved changes.')
+        box.setInformativeText("Do you want to save your changes before closing?")
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        choice = box.exec()
+
+        if choice == QMessageBox.Discard:
+            return True
+        if choice == QMessageBox.Save:
+            return self._saveController(controller)
+        return False  # Cancel
+
+    def _saveController(self, controller):
+        """Save (prompting for a destination via Save As if `controller`'s
+        project has never been saved) - the same two-path logic
+        MenuBar._save/_saveAs implement for the *active* project, but
+        usable for any controller, since the project a close-confirmation
+        prompt is about isn't necessarily the one currently on screen
+        (closing a background tab, or every open tab on window close).
+        Returns whether the save actually happened."""
+        filePath = controller.project.filePath
+        if filePath is None:
+            filePath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Plate-A-Pixel Files (*.pap)")
+            if not filePath:
+                return False
+        controller.save(filePath)
+        return True
+
+    def closeEvent(self, event):
+        for controller in self._appController.projectControllers:
+            if not self._confirmDiscardingChanges(controller):
+                event.ignore()
+                return
+        event.accept()
+
     # -- AppController signals ------------------------------------------
 
     def _onProjectOpened(self, controller):
@@ -332,6 +398,11 @@ class AppWindow(QMainWindow):
         controller.paletteChanged.connect(handler)
         controller.viewSettingsChanged.connect(handler)
         controller.meshReady.connect(handler)
+        # A full rebuild (not just the dirty-only refresh _onProjectEdited
+        # gives every other edit signal above) - a save can change the
+        # tab's actual label text (Project.save renames the project to
+        # match wherever it was saved), which setDirty alone can't reflect.
+        controller.nameChanged.connect(self._rebuildTabs)
         self._rebuildTabs()
         # A brand-new ProjectController's mesh is never computed until
         # something edits through editing(affectsMesh=True) - without this,

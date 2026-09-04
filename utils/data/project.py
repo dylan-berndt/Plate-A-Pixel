@@ -113,7 +113,18 @@ class Project:
         canvas's (already scale-reduced) image, its height grid, and a
         JSON sidecar with the palette (colors, names) and view settings.
         That's everything Canvas needs to reconstruct the same canvas -
-        and everything Mesh needs to rebuild the same mesh - on load."""
+        and everything Mesh needs to rebuild the same mesh - on load.
+
+        Also renames the project to match `filePath` (the same
+        filename-minus-extension convention fromImagePath uses for a
+        fresh import), the same way a "Save As" to a new name is expected
+        to rename the document everywhere it's shown (the project tab, in
+        particular - see AppWindow._rebuildTabs) - not just at the new
+        location on disk. A plain "Save" that reuses the same filePath as
+        before is a no-op rename, so this doesn't need to special-case
+        "Save" vs. "Save As"."""
+        self.name = os.path.splitext(os.path.basename(filePath))[0]
+
         metadata = {
             "formatVersion": FORMAT_VERSION,
             "name": self.name,

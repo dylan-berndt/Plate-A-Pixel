@@ -17,6 +17,12 @@ class MenuBar(QMenuBar):
     autoNameUnnamedColors), so there's nothing for this class to block
     on; it just calls save() the same as any other edit path.
 
+    "Close Tab" doesn't close anything itself - it emits
+    closeActiveTabRequested, which AppWindow connects to its own
+    _closeTab (the same method the tab strip's own close button calls),
+    so there's exactly one place that actually closes a tab and confirms
+    unsaved changes first, not two copies of that logic.
+
     The Edit menu's Select All / Deselect All / Invert Selection entries
     are AppController.keymapController's own QAction objects (see
     KeymapController), not built here - adding the same action a menu
@@ -27,6 +33,7 @@ class MenuBar(QMenuBar):
 
     exportRequested = Signal()
     settingsRequested = Signal()
+    closeActiveTabRequested = Signal()
 
     def __init__(self, appController, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -66,7 +73,7 @@ class MenuBar(QMenuBar):
         fileMenu.addSeparator()
         closeAction = fileMenu.addAction("Close Tab")
         closeAction.setShortcut(QKeySequence.Close)
-        closeAction.triggered.connect(self._closeActiveTab)
+        closeAction.triggered.connect(self.closeActiveTabRequested.emit)
 
         editMenu = self.addMenu("Edit")
         self._undoAction = editMenu.addAction("Undo")
@@ -122,12 +129,6 @@ class MenuBar(QMenuBar):
         filePath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Plate-A-Pixel Files (*.pap)")
         if filePath:
             controller.save(filePath)
-
-    def _closeActiveTab(self):
-        appController = self._appController
-        controller = appController.activeController
-        if controller is not None:
-            appController.closeProject(appController.projectControllers.index(controller))
 
     # -- Edit --------------------------------------------------------------
 

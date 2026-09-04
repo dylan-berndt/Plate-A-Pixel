@@ -71,7 +71,11 @@ def test_save_load_round_trip_preserves_image_layers_and_palette(tmp_path, proje
 
     restored = Project.load(str(path))
 
-    assert restored.name == "Test Project"
+    # save() renames the project to match the saved filename (see its own
+    # docstring) - "Test Project" was this fixture's pre-save name, not
+    # what either `project` or `restored` should show afterward.
+    assert project.name == "test"
+    assert restored.name == "test"
     assert np.array_equal(restored.canvas.image, project.canvas.image)
     assert np.array_equal(restored.canvas.layers, project.canvas.layers)
     assert np.array_equal(restored.canvas.map, project.canvas.map)

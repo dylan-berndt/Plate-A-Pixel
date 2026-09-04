@@ -165,6 +165,27 @@ def test_save_writes_to_the_given_path_and_clears_dirty(controller, tmp_path):
     assert controller.project.filePath == path
 
 
+def test_save_renames_the_project_to_match_the_saved_file_and_emits_name_changed(controller, tmp_path):
+    calls = spy(controller.nameChanged)
+    path = tmp_path / "my_cool_project.pap"
+
+    controller.save(str(path))
+
+    assert controller.project.name == "my_cool_project"
+    assert len(calls) == 1
+
+
+def test_resaving_the_same_path_still_emits_name_changed(controller, tmp_path):
+    path = str(tmp_path / "test.pap")
+    controller.save(path)
+    calls = spy(controller.nameChanged)
+
+    controller.save()  # plain "Save", same path - a no-op rename
+
+    assert controller.project.name == "test"
+    assert len(calls) == 1
+
+
 def test_save_with_no_path_reuses_the_last_saved_path(controller, tmp_path):
     path = str(tmp_path / "test.pap")
     controller.save(path)

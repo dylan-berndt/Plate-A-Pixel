@@ -45,7 +45,10 @@ def test_open_project_round_trips_a_saved_file(app, imagePath, tmp_path):
     reopened = app.openProject(str(savePath))
 
     assert app.activeController is reopened
-    assert reopened.project.name == "Original"
+    # save() renames the project to match the saved filename (see its own
+    # docstring) - "Original" was the pre-save name, not what the saved
+    # file (or a project reopened from it) actually carries.
+    assert reopened.project.name == "test"
     assert len(app.projectControllers) == 2
 
 

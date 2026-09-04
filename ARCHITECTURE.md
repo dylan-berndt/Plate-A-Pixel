@@ -110,6 +110,12 @@ when to redraw. It never calls into `utils/data/` directly.
     it from the image, so a later recolor can't desync a reload.
     Selection, undo history, and any in-progress tool state are
     intentionally not part of the format — a reload always starts clean.
+    `save` also renames the project to match `filePath` (filename minus
+    extension, the same convention `fromImagePath` uses) - a "Save As" to
+    a new name is expected to rename the document everywhere it's shown,
+    the project tab in particular (see `AppWindow._rebuildTabs`, wired to
+    `ProjectController.nameChanged`), not just at the new location on
+    disk. A plain "Save" reusing the same path is a no-op rename.
   - `Project.exportObjs(dir)` writes one OBJ per mesh component, scaling
     X/Z by `cellWidth` and Y by `cellHeight` independently (`objExport.py`
     takes both explicitly — never one uniform scale). Every palette
@@ -284,7 +290,9 @@ right before writing, calls `canvasController.autoNameUnnamedColors()`
 every palette entry to already have a name the way an OBJ export still
 does (`ExportDialog`'s own guard, unchanged); this is what makes that
 true regardless of which caller (`MenuBar`, a test, anything else)
-invokes `save()`.
+invokes `save()`. Always emits `nameChanged` afterward (even on a plain
+"Save" that renamed nothing) - see `Project.save` above for why the
+project's name can change here at all.
 
 **Mesh recomputation runs on a background `QThread`** (`_MeshWorker`,
 same file) — a full image's boolean-union work (~0.6s) is long enough to
@@ -462,6 +470,21 @@ concern, not domain state).
   doesn't import Qt-OpenGL machinery it doesn't otherwise need);
   `setExportHandler` wires in whatever opens `ExportDialog`. `main.py` is
   what actually calls all four.
+
+  Every path that can close a project - the tab strip's own close
+  button (`_closeTab`), File > Close Tab (`MenuBar.
+  closeActiveTabRequested`, which `_closeActiveTabFromMenu` just
+  resolves the active project's index for and hands to `_closeTab`, so
+  there's exactly one place that actually closes a tab), and closing the
+  whole window (`closeEvent`, checking every open project, not just the
+  active one) - goes through `_confirmDiscardingChanges(controller)`
+  first. A clean project returns `True` immediately, no dialog; a dirty
+  one shows a `QMessageBox` (Save / Discard / Cancel) and only returns
+  `True` if the user picked Discard or a Save actually completed
+  (`_saveController`, prompting via Save As if the project was never
+  saved) - `False` (Cancel, or a prompted Save As itself cancelled) means
+  the caller must abort: `_closeTab` returns without closing anything,
+  `closeEvent` calls `event.ignore()` and stops checking the rest.
 
   The work area itself is a `QStackedLayout` of three pages - "Canvas"
   (the color canvas), "Layer" (the layer canvas), "Mesh" (the mesh view)
