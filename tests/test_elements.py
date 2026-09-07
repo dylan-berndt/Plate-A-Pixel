@@ -1,6 +1,7 @@
 from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtGui import QColor
 
-from utils.ui.elements import TabBar
+from utils.ui.elements import TabBar, IconButton, Icons
 
 
 def test_tab_bar_survives_repeated_set_tabs_with_deferred_deletion_flushed():
@@ -24,3 +25,32 @@ def test_tab_bar_survives_repeated_set_tabs_with_deferred_deletion_flushed():
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)  # should not raise
 
     assert bar._layout.count() == 3  # 2 tabs + the persistent new-tab button
+
+
+# -- IconButton --------------------------------------------------------------
+
+def test_icon_button_defaults_to_bordered_with_a_shared_nine_slice():
+    button = IconButton(Icons.WAND)
+    assert button._bordered is True
+    assert button._nineSlice is not None
+
+
+def test_icon_button_bordered_false_skips_nine_slice_state():
+    button = IconButton(Icons.PENCIL, size=16, bordered=False)
+    assert button._bordered is False
+    assert not hasattr(button, "_nineSlice")
+
+
+def test_icon_button_paint_event_does_not_raise_for_either_mode():
+    bordered = IconButton(Icons.WAND)
+    bordered.resize(40, 40)
+    ghost = IconButton(Icons.PENCIL, size=16, bordered=False)
+    ghost.resize(16, 16)
+    bordered.repaint()  # should not raise
+    ghost.repaint()  # should not raise
+
+
+def test_icon_button_checked_state_selects_the_active_color():
+    button = IconButton(Icons.WAND, checkable=True, activeColor="#123456")
+    button.setChecked(True)
+    assert button._activeColor == QColor("#123456")

@@ -1,8 +1,12 @@
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QButtonGroup, QFrame
+from PySide6.QtGui import QPainter, QColor
 from PySide6.QtCore import Qt
 
 from .elements import IconButton, Icons, SectionLabel, Stepper, Theme
+from .nineSlice import sharedNineSlice
+
+RAIL_BORDER_SCALE = 2
 
 
 def selectionHeightText(canvas):
@@ -36,9 +40,12 @@ class ToolRail(QWidget):
         self._appController = appController
         self._toolController = toolController
         self._boundProjectController = None
+        self._backgroundColor = QColor(theme.clay300)
+        self._nineSlice = sharedNineSlice()
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 14, 8, 14)
+        edgeThickness = self._nineSlice.borderThickness(RAIL_BORDER_SCALE)
+        layout.setContentsMargins(8, 14, 8 + edgeThickness, 14)
         layout.setSpacing(8)
         layout.setAlignment(layout.alignment())
 
@@ -72,6 +79,14 @@ class ToolRail(QWidget):
 
         self._toolController.activeToolChanged.connect(self._onActiveToolChanged)
         self._onActiveToolChanged(self._toolController.registry.activeTool)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.fillRect(self.rect(), self._backgroundColor)
+        self._nineSlice.paintEdge(painter, self.rect(), "right", RAIL_BORDER_SCALE)
+        painter.end()
+        super().paintEvent(event)
 
     def _onActiveToolChanged(self, tool):
         if tool is None:

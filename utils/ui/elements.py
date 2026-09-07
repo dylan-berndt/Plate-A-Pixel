@@ -3,10 +3,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QButtonGroup, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QSize, QByteArray, Signal
-from PySide6.QtGui import QPixmap, QPainter, QIcon
+from PySide6.QtGui import QPixmap, QPainter, QIcon, QColor
 from PySide6.QtSvg import QSvgRenderer
 from .base import *
-from .nineSlice import NineSliceFrame
+from .nineSlice import NineSliceFrame, sharedNineSlice
 
 
 class Text(QLabel):
@@ -156,11 +156,20 @@ class IconButton(QPushButton):
     """A square, icon-only button. Renders the given icon body in ink when
     off and paper when on (checked) so a checkable rail button reads
     correctly against its own highlighted background - see the active
-    Wand button in the mockup's tool rail."""
+    Wand button in the mockup's tool rail.
+
+    `bordered=True` (the default) paints a pixel-art nine-slice border/
+    background instead of QSS's border/border-radius, matching the rest
+    of the app's chrome (see NineSliceFrame's own note on why QSS's
+    anti-aliased border-radius doesn't work for pixel art). The few
+    "ghost" icon buttons that sit inline in other rows/bars (a palette
+    row's edit pencil, a tab's close X, the tab bar's own "+") pass
+    `bordered=False` to keep their existing plain, borderless look
+    instead."""
 
     def __init__(self, iconBody: str, onClick=None, checkable: bool = False, size: int = 40,
                  activeColor: str = None, iconColor: str = None, iconColorOn: str = None,
-                 theme: Theme = None, **kwargs):
+                 theme: Theme = None, bordered: bool = True, borderScale: int = 1, **kwargs):
         super().__init__(**kwargs)
         theme = theme or Theme()
         activeColor = activeColor or theme.glaze
@@ -177,18 +186,48 @@ class IconButton(QPushButton):
         self.setIcon(icon)
         self.setIconSize(QSize(iconSize, iconSize))
 
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background: {theme.paper};
-                border: 1.5px solid {theme.ink};
-                border-radius: {theme.borderRadius}px;
-            }}
-            QPushButton:hover {{ background: {theme.clay200}; }}
-            QPushButton:checked {{ background: {activeColor}; }}
-            QPushButton:checked:hover {{ background: {activeColor}; }}
-        """)
+        # Either way, QSS itself draws nothing: bordered paints its own
+        # background/border in paintEvent below (so QSS must stay out of
+        # the way), and ghost buttons were always meant to be fully
+        # transparent with no border of their own.
+        self.setStyleSheet("QPushButton { background: transparent; border: none; }")
+
+        self._bordered = bordered
+        if bordered:
+            self._nineSlice = sharedNineSlice()
+            self._borderScale = borderScale
+            self._paperColor = QColor(theme.paper)
+            self._hoverColor = QColor(theme.clay200)
+            self._activeColor = QColor(activeColor)
+
         if onClick is not None:
             self.clicked.connect(onClick)
+
+    def paintEvent(self, event):
+        if self._bordered:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            if self.isChecked():
+                color = self._activeColor
+            elif self.underMouse():
+                color = self._hoverColor
+            else:
+                color = self._paperColor
+            t = self._nineSlice.borderThickness(self._borderScale)
+            painter.fillRect(self.rect().adjusted(t, t, -t, -t), color)
+            self._nineSlice.paint(painter, self.rect(), self._borderScale)
+            painter.end()
+        super().paintEvent(event)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        if self._bordered:
+            self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        if self._bordered:
+            self.update()
 
 
 # -- grouped controls --------------------------------------------------------
@@ -274,6 +313,39 @@ class PillToggle(QPushButton):
             self.toggled.connect(onToggle)
 
 
+class _StepperButton(QPushButton):
+    """A -/+ button painted with the same pixel-art nine-slice border as
+    the rest of the app's buttons (see IconButton) instead of QSS's
+    anti-aliased border-radius. Kept private and separate from
+    IconButton rather than sharing its paintEvent: this button shows
+    text, not an icon, and has no checked/active state to track."""
+
+    def __init__(self, text: str, theme: Theme, **kwargs):
+        super().__init__(text, **kwargs)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 12px; padding: 0; }")
+        self._nineSlice = sharedNineSlice()
+        self._paperColor = QColor(theme.paper)
+        self._hoverColor = QColor(theme.clay200)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        color = self._hoverColor if self.underMouse() else self._paperColor
+        t = self._nineSlice.borderThickness(1)
+        painter.fillRect(self.rect().adjusted(t, t, -t, -t), color)
+        self._nineSlice.paint(painter, self.rect(), 1)
+        painter.end()
+        super().paintEvent(event)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+
 class Stepper(QWidget):
     """The "− value +" control used throughout the mockup's right rail
     (base margin, cell width/height) and the tool rail (layer height).
@@ -301,19 +373,11 @@ class Stepper(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4 if vertical else 6)
 
-        buttonStyle = f"""
-            QPushButton {{
-                background: {theme.paper}; border: 1.5px solid {theme.ink};
-                border-radius: 3px; font-size: 12px; padding: 0;
-            }}
-            QPushButton:hover {{ background: {theme.clay200}; }}
-        """
-        self._minus = QPushButton("−")
-        self._plus = QPushButton("+")
+        self._minus = _StepperButton("−", theme)
+        self._plus = _StepperButton("+", theme)
         buttonSize = 40 if vertical else 20
         for button in (self._minus, self._plus):
             button.setFixedSize(buttonSize, 20 if vertical else 20)
-            button.setStyleSheet(buttonStyle)
 
         self._label = MonoText(text, theme=theme)
         # Wide enough for "0.12"/"40 mm"-shaped values even when the
@@ -398,8 +462,7 @@ class PaletteRow(QWidget):
         layout.addWidget(textContainer, 1)
 
         if onEditColor is not None:
-            editButton = IconButton(Icons.PENCIL, onClick=onEditColor, size=16, theme=theme)
-            editButton.setStyleSheet("QPushButton { background: transparent; border: none; }")
+            editButton = IconButton(Icons.PENCIL, onClick=onEditColor, size=16, theme=theme, bordered=False)
             layout.addWidget(editButton)
 
     def name(self):
@@ -548,8 +611,8 @@ class Tab(QWidget):
             closeIconColor = self._theme.ink if active else self._theme.paper
             closeButton = IconButton(
                 Icons.CLOSE, onClick=onClose, size=16, iconColor=closeIconColor, theme=self._theme,
+                bordered=False,
             )
-            closeButton.setStyleSheet("QPushButton { background: transparent; border: none; }")
             layout.addWidget(closeButton)
 
         self._applyStyle()
@@ -606,8 +669,8 @@ class TabBar(QWidget):
         # close button gets for the same reason.
         self._newTabButton = IconButton(
             Icons.PLUS, onClick=onNewTab, size=30, iconColor=self._theme.paper, theme=self._theme,
+            bordered=False,
         )
-        self._newTabButton.setStyleSheet("QPushButton { background: transparent; border: none; }")
 
     def setTabs(self, entries):
         """entries: list of (label, active, dirty)."""

@@ -11,6 +11,20 @@ ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
 DEFAULT_SLICE_PATH = ASSETS_DIR / "slice.png"
 DEFAULT_CORNER_SIZE = 2
 
+# One NineSlice per (path, cornerSize), shared by every NineSliceFrame/
+# NineSliceEdge/IconButton instance and anything else that paints with
+# one - slicing the same source image again for every widget would just
+# be wasted work, not wrong, so this is a plain optimization living at
+# module level so nothing has to reach into one particular class to get it.
+_shared = {}
+
+
+def sharedNineSlice(imagePath=DEFAULT_SLICE_PATH, cornerSize: int = DEFAULT_CORNER_SIZE) -> "NineSlice":
+    key = (str(imagePath), cornerSize)
+    if key not in _shared:
+        _shared[key] = NineSlice(imagePath, cornerSize)
+    return _shared[key]
+
 
 class NineSlice:
     """A nine-slice border texture cut from a small square source image -
@@ -109,6 +123,29 @@ class NineSlice:
                 self._upscale(self.center, midWidth, midHeight),
             )
 
+    def paintEdge(self, painter: QPainter, rect: QRect, side: str, scale: int = 1):
+        """Tiles just one named edge's art along the corresponding side of
+        `rect`, its full length - no corners, unlike paint() above. For a
+        panel with only one real visible border - the tool rail's right
+        edge or the right pane's left edge, both flush against the
+        window's other three edges, where a rounded corner wouldn't sit
+        against anything and so wouldn't make sense."""
+        c = self.borderThickness(scale)
+        if side == "top":
+            tile = self._upscale(self.top, self.top.width() * scale, c)
+            painter.drawTiledPixmap(QRect(rect.left(), rect.top(), rect.width(), c), tile)
+        elif side == "bottom":
+            tile = self._upscale(self.bottom, self.bottom.width() * scale, c)
+            painter.drawTiledPixmap(QRect(rect.left(), rect.bottom() - c + 1, rect.width(), c), tile)
+        elif side == "left":
+            tile = self._upscale(self.left, c, self.left.height() * scale)
+            painter.drawTiledPixmap(QRect(rect.left(), rect.top(), c, rect.height()), tile)
+        elif side == "right":
+            tile = self._upscale(self.right, c, self.right.height() * scale)
+            painter.drawTiledPixmap(QRect(rect.right() - c + 1, rect.top(), c, rect.height()), tile)
+        else:
+            raise ValueError(f"Unknown side '{side}' - must be top/bottom/left/right")
+
 
 class NineSliceFrame(QWidget):
     """A pixel-art alternative to a bordered/rounded QFrame "card" - paints
@@ -135,11 +172,6 @@ class NineSliceFrame(QWidget):
         layout.setContentsMargins(12 + t, 12 + t, 12 + t, 12 + t)
     """
 
-    # One NineSlice per (path, cornerSize) shared across every instance -
-    # slicing the same source image again for every card would just be
-    # wasted work, not wrong, so this is a plain optimization.
-    _shared = {}
-
     def __init__(
         self, backgroundColor: str, scale: int = 3,
         imagePath=DEFAULT_SLICE_PATH, cornerSize: int = DEFAULT_CORNER_SIZE,
@@ -148,14 +180,7 @@ class NineSliceFrame(QWidget):
         super().__init__(**kwargs)
         self._scale = scale
         self._backgroundColor = QColor(backgroundColor)
-        self._nineSlice = self._sharedNineSlice(imagePath, cornerSize)
-
-    @classmethod
-    def _sharedNineSlice(cls, imagePath, cornerSize):
-        key = (str(imagePath), cornerSize)
-        if key not in cls._shared:
-            cls._shared[key] = NineSlice(imagePath, cornerSize)
-        return cls._shared[key]
+        self._nineSlice = sharedNineSlice(imagePath, cornerSize)
 
     def borderThickness(self) -> int:
         return self._nineSlice.borderThickness(self._scale)
@@ -170,4 +195,50 @@ class NineSliceFrame(QWidget):
         t = self.borderThickness()
         painter.fillRect(self.rect().adjusted(t, t, -t, -t), self._backgroundColor)
         self._nineSlice.paint(painter, self.rect(), self._scale)
+        painter.end()
+
+
+class NineSliceEdge(QWidget):
+    """Like NineSliceFrame, but for a panel with only one real visible
+    border - the tool rail's right edge, or a side pane's left edge, both
+    flush against the window's other three edges. A full four-corner frame
+    would draw rounded corners that don't sit against anything and so
+    wouldn't make sense; this fills the whole rect with `backgroundColor`
+    and tiles just the named edge's art along that one side (see
+    NineSlice.paintEdge).
+
+    Owns no layout of its own, same as NineSliceFrame - a caller adds one
+    and pads contentsMargins on the bordered side with borderThickness()
+    so children never overlap the painted edge:
+
+        rail = NineSliceEdge(theme.clay300, side="right", scale=2)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(0, 0, rail.borderThickness(), 0)
+    """
+
+    def __init__(
+        self, backgroundColor: str, side: str, scale: int = 2,
+        imagePath=DEFAULT_SLICE_PATH, cornerSize: int = DEFAULT_CORNER_SIZE,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if side not in ("top", "bottom", "left", "right"):
+            raise ValueError(f"Unknown side '{side}' - must be top/bottom/left/right")
+        self._side = side
+        self._scale = scale
+        self._backgroundColor = QColor(backgroundColor)
+        self._nineSlice = sharedNineSlice(imagePath, cornerSize)
+
+    def borderThickness(self) -> int:
+        return self._nineSlice.borderThickness(self._scale)
+
+    def setBackgroundColor(self, color: str):
+        self._backgroundColor = QColor(color)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.fillRect(self.rect(), self._backgroundColor)
+        self._nineSlice.paintEdge(painter, self.rect(), self._side, self._scale)
         painter.end()

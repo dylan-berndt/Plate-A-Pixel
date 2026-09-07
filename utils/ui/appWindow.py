@@ -12,6 +12,7 @@ from .meshSettingsPanel import MeshSettingsPanel
 from .statusBar import StatusBar
 from .settingsWindow import SettingsWindow
 from .elements import TabBar, ViewModeTabs
+from .nineSlice import NineSliceEdge
 
 # A plain, literal black for every chrome outline (tool rail, tool options
 # bar, right pane) - not theme.ink (a warm near-black used elsewhere for
@@ -93,25 +94,13 @@ class AppWindow(QMainWindow):
         # Plain widget, not a splitter pane - this one was a mistake to
         # make resizable at all; only the right pane should be.
         self._toolRail = ToolRail(appController, appController.toolController, theme=self.theme)
-        # objectName-scoped selector, not a bare declaration list: an
-        # unscoped local stylesheet on a widget still cascades to its
-        # QLabel descendants (QLabel is itself a QFrame subclass - see the
-        # identical note on MeshSettingsPanel's card/SegmentedControl's
-        # frame), which would draw this same border down the left edge of
-        # every "LAYER" SectionLabel-style child instead of just the rail.
-        self._toolRail.setObjectName("toolRail")
         # No longer a splitter pane, so this isn't a drag-resize floor -
         # just a safety net so nothing else in the layout can squeeze the
-        # rail narrower than its own icons plus the margin above.
+        # rail narrower than its own icons plus the margin above. Its
+        # background and right-edge border are self-painted (see
+        # ToolRail.paintEvent) with the same nine-slice art as the rest of
+        # the app's pixel-art borders, rather than drawn via QSS here.
         self._toolRail.setMinimumWidth(40)
-        self._toolRail.setAttribute(Qt.WA_StyledBackground, True)
-        # Only border-right, not a full border: this pane sits flush
-        # against the window's own left/top/bottom edges, where an outline
-        # would just double up against the window frame - only the edge
-        # facing the canvas in the middle needs one.
-        self._toolRail.setStyleSheet(
-            f"QWidget#toolRail {{ background: {self.theme.clay300}; border-right: 2px solid {OUTLINE_COLOR}; }}"
-        )
         body.addWidget(self._toolRail)
 
         # Only the right pane is a QSplitter (with the work area as its
@@ -157,25 +146,18 @@ class AppWindow(QMainWindow):
 
         splitter.addWidget(centerWidget)
 
-        rightContainer = QWidget()
+        # Self-paints its background and left-edge border via the same
+        # nine-slice art as the rest of the app's pixel-art borders - see
+        # the identical note on toolRail above - instead of QSS.
+        rightContainer = NineSliceEdge(self.theme.clay300, side="left", scale=2)
         # Not an arbitrary floor: MeshSettingsPanel's rows use fixed
         # (not shrinkable) widths sized for exactly this much space - see
         # its CARD_CONTENT_WIDTH note - so narrower would clip a row's
         # content rather than reflow it. The user can still widen this
         # pane freely; just not below where it actually fits.
         rightContainer.setMinimumWidth(250)
-        # objectName-scoped for the same reason as toolRail above - an
-        # unscoped local stylesheet here would also draw this border down
-        # every SectionLabel in PaletteRail/MeshSettingsPanel (QLabel is a
-        # QFrame subclass), not just around the pane itself.
-        rightContainer.setObjectName("rightContainer")
-        rightContainer.setAttribute(Qt.WA_StyledBackground, True)
-        # Only border-left - see the identical note on toolRail above.
-        rightContainer.setStyleSheet(
-            f"QWidget#rightContainer {{ background: {self.theme.clay300}; border-left: 2px solid {OUTLINE_COLOR}; }}"
-        )
         rightLayout = QVBoxLayout(rightContainer)
-        rightLayout.setContentsMargins(0, 0, 0, 0)
+        rightLayout.setContentsMargins(rightContainer.borderThickness(), 0, 0, 0)
         rightLayout.setSpacing(0)
         self._paletteRail = PaletteRail(theme=self.theme)
         self._meshSettingsPanel = MeshSettingsPanel(theme=self.theme)

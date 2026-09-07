@@ -2,7 +2,7 @@ import pytest
 from PySide6.QtGui import QImage, QPainter, QColor
 from PySide6.QtCore import QRect, Qt
 
-from utils.ui.nineSlice import NineSlice, NineSliceFrame, DEFAULT_SLICE_PATH
+from utils.ui.nineSlice import NineSlice, NineSliceFrame, NineSliceEdge, DEFAULT_SLICE_PATH
 
 INK = (16, 18, 28, 255)
 FILL = (176, 167, 184, 255)
@@ -151,3 +151,69 @@ def test_set_background_color_changes_what_gets_painted():
     frame.setBackgroundColor("#00ff00")
 
     assert frame._backgroundColor == QColor("#00ff00")
+
+
+def test_nine_slice_frame_and_edge_share_the_same_underlying_nine_slice():
+    # Both go through the module-level sharedNineSlice() cache now, not
+    # two disconnected per-class caches.
+    frame = NineSliceFrame(backgroundColor="#ffffff")
+    edge = NineSliceEdge(backgroundColor="#ffffff", side="right")
+    assert frame._nineSlice is edge._nineSlice
+
+
+# -- NineSlice.paintEdge / NineSliceEdge ------------------------------------
+
+def test_paint_edge_tiles_only_the_named_side_leaving_the_rest_untouched(nineSlice):
+    scale = 2
+    size = 60
+    thickness = nineSlice.borderThickness(scale)
+    image = QImage(size, size, QImage.Format_ARGB32)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    nineSlice.paintEdge(painter, QRect(0, 0, size, size), "right", scale=scale)
+    painter.end()
+
+    # Right edge painted: the outline column should be opaque ink...
+    assert image.pixelColor(size - 1, 5).getRgb() == INK
+    # ...but nothing was painted on the opposite (left) side, or any
+    # other side - paintEdge draws exactly one edge, no corners.
+    assert image.pixelColor(0, 5).alpha() == 0
+    assert image.pixelColor(5, 0).alpha() == 0
+    assert image.pixelColor(5, size - 1).alpha() == 0
+    # Just inside the painted edge, past its thickness, should still be
+    # untouched (paintEdge fills only a `thickness`-wide strip).
+    assert image.pixelColor(size - thickness - 1, 5).alpha() == 0
+
+
+def test_paint_edge_rejects_unknown_side(nineSlice):
+    image = QImage(10, 10, QImage.Format_ARGB32)
+    painter = QPainter(image)
+    with pytest.raises(ValueError):
+        nineSlice.paintEdge(painter, QRect(0, 0, 10, 10), "diagonal")
+    painter.end()
+
+
+def test_nine_slice_edge_rejects_unknown_side():
+    with pytest.raises(ValueError):
+        NineSliceEdge(backgroundColor="#ffffff", side="diagonal")
+
+
+def test_nine_slice_edge_border_thickness_matches_its_scale():
+    edge = NineSliceEdge(backgroundColor="#ffffff", side="left", scale=3)
+    assert edge.borderThickness() == 2 * 3
+
+
+def test_nine_slice_edge_paints_background_and_the_one_named_edge():
+    edge = NineSliceEdge(backgroundColor="#ff00ff", side="left", scale=2)
+    edge.resize(40, 40)
+    image = QImage(40, 40, QImage.Format_ARGB32)
+    edge.render(image)
+
+    # Away from the painted edge, the background fill shows through.
+    center = image.pixelColor(30, 20)
+    assert (center.red(), center.green(), center.blue()) == (255, 0, 255)
+    # The named (left) edge's outline column is drawn over that fill.
+    assert image.pixelColor(0, 20).getRgb() == INK
+    # The opposite (right) edge is untouched background, not bordered.
+    right = image.pixelColor(39, 20)
+    assert (right.red(), right.green(), right.blue()) == (255, 0, 255)
