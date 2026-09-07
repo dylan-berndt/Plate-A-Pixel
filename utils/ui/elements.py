@@ -1,11 +1,12 @@
 from PySide6.QtWidgets import (
     QLabel, QLineEdit, QSlider, QPushButton, QComboBox, QDialog, QWidget, QGridLayout,
-    QHBoxLayout, QVBoxLayout, QButtonGroup, QFrame, QSizePolicy,
+    QHBoxLayout, QVBoxLayout, QButtonGroup, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QSize, QByteArray, Signal
 from PySide6.QtGui import QPixmap, QPainter, QIcon
 from PySide6.QtSvg import QSvgRenderer
 from .base import *
+from .nineSlice import NineSliceFrame
 
 
 class Text(QLabel):
@@ -208,17 +209,18 @@ class SegmentedControl(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        frame = QFrame()
-        # QLabel is itself a QFrame subclass in Qt, so a bare "QFrame {...}"
-        # selector would also match any QLabel this frame ever contains
-        # (see the identical fix/note in MeshSettingsPanel) - scoping by
-        # objectName keeps this rule on just this one frame.
-        frame.setObjectName("segmentedControlFrame")
-        frame.setStyleSheet(
-            f"QFrame#segmentedControlFrame {{ border: 1.5px solid {theme.ink}; border-radius: {theme.borderRadius}px; }}"
-        )
+        # A NineSliceFrame (assets/slice.png), not a QFrame with a QSS
+        # border/border-radius - see the identical note on
+        # MeshSettingsPanel's card for why (hard pixel-art corners, and no
+        # stylesheet here for a child QLabel to accidentally inherit).
+        # backgroundColor is only ever visible at the four corner notches
+        # cut by the rounded border art (the buttons below fill the rest
+        # of the frame edge-to-edge) - theme.paper matches every context
+        # this control is actually used in.
+        frame = NineSliceFrame(theme.paper, scale=2)
         layout = QHBoxLayout(frame)
-        layout.setContentsMargins(1, 1, 1, 1)
+        frameBorder = frame.borderThickness()
+        layout.setContentsMargins(1 + frameBorder, 1 + frameBorder, 1 + frameBorder, 1 + frameBorder)
         layout.setSpacing(0)
         outer.addWidget(frame)
 

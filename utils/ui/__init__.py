@@ -1,3 +1,4 @@
+from .nineSlice import *
 from .toolRail import *
 from .toolOptionsBar import *
 from .paletteRail import *

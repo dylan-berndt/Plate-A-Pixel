@@ -1,7 +1,8 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from PySide6.QtCore import QTimer
 
 from .elements import SectionLabel, SegmentedControl, Stepper, Theme
+from .nineSlice import NineSliceFrame
 
 
 class MeshSettingsPanel(QWidget):
@@ -36,10 +37,7 @@ class MeshSettingsPanel(QWidget):
     GEOMETRY_STEP = 0.01
     # The card's own available width for a row's label+stepper - measured
     # empirically from card.layout().contentsRect() rather than derived
-    # from the rail width, card margins, and card padding alone: the
-    # card's QSS border (see its QFrame#meshCard stylesheet) also eats
-    # into the content rect on top of setContentsMargins, by an amount
-    # Qt's box-model computes internally rather than exposing simply.
+    # from the rail width, card margins, and card padding alone.
     CARD_CONTENT_WIDTH = 194
 
     DEBOUNCE_MS = 200
@@ -63,18 +61,18 @@ class MeshSettingsPanel(QWidget):
 
         outer.addWidget(SectionLabel("Mesh", theme=self._theme))
 
-        card = QFrame()
-        # QLabel is itself a QFrame subclass in Qt, so a bare "QFrame {...}"
-        # selector here would also match every SectionLabel (a QLabel) added
-        # below - each one would pick up this card's own border/background,
-        # rendering as a little pill around its text. objectName scopes the
-        # rule to just this one frame.
-        card.setObjectName("meshCard")
-        card.setStyleSheet(
-            f"QFrame#meshCard {{ background: {self._theme.paper}; border: 1.5px solid {self._theme.ink}; border-radius: 6px; }}"
-        )
+        # A NineSliceFrame (assets/slice.png), not a QFrame with a QSS
+        # border/border-radius - the whole point of the pixel-art nine-
+        # slice border is the hard, unsmoothed corners a QSS border-radius
+        # would anti-alias away. It's a plain QWidget with its own
+        # paintEvent, not a QFrame, so (unlike the old QSS approach) there's
+        # no stylesheet here at all for a child QLabel to accidentally
+        # inherit - the objectName-scoping QFrame needed for exactly that
+        # reason isn't needed anymore.
+        card = NineSliceFrame(self._theme.paper, scale=2)
         cardLayout = QVBoxLayout(card)
-        cardLayout.setContentsMargins(12, 12, 12, 12)
+        cardBorder = card.borderThickness()
+        cardLayout.setContentsMargins(12 + cardBorder, 12 + cardBorder, 12 + cardBorder, 12 + cardBorder)
         cardLayout.setSpacing(12)
 
         self._hollowControl = SegmentedControl(
