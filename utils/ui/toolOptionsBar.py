@@ -1,6 +1,8 @@
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QFrame
+from PySide6.QtGui import QPainter, QColor
 
 from .elements import SectionLabel, IconButton, Icons, Theme, buildOptionWidget
+from .nineSlice import sharedNineSlice, STANDARD_SCALE
 
 
 class ToolOptionsBar(QWidget):
@@ -10,7 +12,11 @@ class ToolOptionsBar(QWidget):
     hand-written UI here), plus Undo/Redo for whichever project is
     active. Options write straight back to tool.selections - a
     FunctionalTool's onPress/onDrag reads that dict directly at gesture
-    time, so there's no controller call for a selection change."""
+    time, so there's no controller call for a selection change.
+
+    Self-paints its own background and full nine-slice border (see
+    paintEvent below) instead of relying on QSS from AppWindow, matching
+    ToolRail's identical self-painting note."""
 
     def __init__(self, appController, toolController, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -18,9 +24,12 @@ class ToolOptionsBar(QWidget):
         self._theme = theme
         self._appController = appController
         self._toolController = toolController
+        self._backgroundColor = QColor(theme.clay100)
+        self._nineSlice = sharedNineSlice()
 
+        t = self._nineSlice.borderThickness(STANDARD_SCALE)
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(14, 6, 14, 6)
+        self._layout.setContentsMargins(14 + t, 6 + t, 14 + t, 6 + t)
         self._layout.setSpacing(12)
 
         self._nameLabel = SectionLabel("", theme=theme)
@@ -44,6 +53,14 @@ class ToolOptionsBar(QWidget):
 
         self._toolController.activeToolChanged.connect(self._rebuild)
         self._rebuild(self._toolController.registry.activeTool)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.fillRect(self.rect(), self._backgroundColor)
+        self._nineSlice.paint(painter, self.rect(), STANDARD_SCALE)
+        painter.end()
+        super().paintEvent(event)
 
     def _rebuild(self, tool):
         while self._optionsLayout.count():

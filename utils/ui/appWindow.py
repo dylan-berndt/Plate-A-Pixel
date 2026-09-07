@@ -14,12 +14,6 @@ from .settingsWindow import SettingsWindow
 from .elements import TabBar, ViewModeTabs
 from .nineSlice import NineSliceEdge
 
-# A plain, literal black for every chrome outline (tool rail, tool options
-# bar, right pane) - not theme.ink (a warm near-black used elsewhere for
-# button/card borders), which read as an inconsistent "two-color" mix
-# once these larger panel outlines sat next to it.
-OUTLINE_COLOR = "#000000"
-
 
 class AppWindow(QMainWindow):
     """Assembles every top-level piece (menu bar, tab strip, tool options
@@ -78,15 +72,10 @@ class AppWindow(QMainWindow):
         )
         rootLayout.addWidget(self._tabBar)
 
+        # Self-paints its own background and border with the app's
+        # nine-slice art now (see ToolOptionsBar.paintEvent) instead of
+        # QSS from here - same as toolRail/rightContainer below.
         self._optionsBar = ToolOptionsBar(appController, appController.toolController, theme=self.theme)
-        # objectName-scoped for the same reason as toolRail/rightContainer
-        # below - an unscoped local stylesheet cascades to QLabel
-        # descendants (QLabel is itself a QFrame subclass).
-        self._optionsBar.setObjectName("optionsBar")
-        self._optionsBar.setAttribute(Qt.WA_StyledBackground, True)
-        self._optionsBar.setStyleSheet(
-            f"QWidget#optionsBar {{ border: {self.theme.borderWidth}px solid {OUTLINE_COLOR}; }}"
-        )
         rootLayout.addWidget(self._optionsBar)
 
         body = QHBoxLayout()

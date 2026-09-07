@@ -1,8 +1,38 @@
-from PySide6.QtWidgets import QMenuBar, QFileDialog
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import QMenuBar, QMenu, QFileDialog
+from PySide6.QtGui import QAction, QKeySequence, QPainter
 from PySide6.QtCore import Signal, Qt
 
 from .base import Theme
+from .nineSlice import sharedNineSlice, STANDARD_SCALE
+
+
+class ThemedMenu(QMenu):
+    """A File/Edit/View dropdown, bordered with the app's nine-slice art
+    instead of QSS's border. contentsMargins reserves exactly the
+    border's own thickness so items lay out inside it rather than under
+    it; QMenu's native painting (background fill from QSS, item
+    highlighting, checkmarks, submenu arrows) still does everything else -
+    this only adds the border art on top, which is safe precisely because
+    the interior it would otherwise paint over (NineSlice.paint's center
+    tile) is fully transparent in slice.png, so it's a no-op there."""
+
+    def __init__(self, title: str, theme: Theme, parent=None):
+        super().__init__(title, parent)
+        self._nineSlice = sharedNineSlice()
+        t = self._nineSlice.borderThickness(STANDARD_SCALE)
+        self.setContentsMargins(t, t, t, t)
+        self.setStyleSheet(f"""
+            QMenu {{ background: {theme.paper}; color: {theme.ink}; border: none; }}
+            QMenu::item {{ padding: 5px 20px; }}
+            QMenu::item:selected {{ background: {theme.clay200}; }}
+        """)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        self._nineSlice.paint(painter, self.rect(), STANDARD_SCALE)
+        painter.end()
 
 
 class MenuBar(QMenuBar):
@@ -49,12 +79,10 @@ class MenuBar(QMenuBar):
             QMenuBar {{ background: {theme.clay950}; color: {theme.paper}; padding: 2px 6px; }}
             QMenuBar::item {{ background: transparent; padding: 4px 10px; }}
             QMenuBar::item:selected {{ background: rgba(255, 255, 255, 0.12); }}
-            QMenu {{ background: {theme.paper}; color: {theme.ink}; border: {theme.borderWidth}px solid {theme.ink}; }}
-            QMenu::item {{ padding: 5px 20px; }}
-            QMenu::item:selected {{ background: {theme.clay200}; }}
         """)
 
-        fileMenu = self.addMenu("File")
+        fileMenu = ThemedMenu("File", theme, self)
+        self.addMenu(fileMenu)
         newAction = fileMenu.addAction("New From Image...")
         newAction.triggered.connect(self._newFromImage)
         openAction = fileMenu.addAction("Open...")
@@ -75,7 +103,8 @@ class MenuBar(QMenuBar):
         closeAction.setShortcut(QKeySequence.Close)
         closeAction.triggered.connect(self.closeActiveTabRequested.emit)
 
-        editMenu = self.addMenu("Edit")
+        editMenu = ThemedMenu("Edit", theme, self)
+        self.addMenu(editMenu)
         self._undoAction = editMenu.addAction("Undo")
         self._undoAction.setShortcut(QKeySequence.Undo)
         self._undoAction.triggered.connect(self._undo)
@@ -93,7 +122,8 @@ class MenuBar(QMenuBar):
         settingsAction = editMenu.addAction("Settings...")
         settingsAction.triggered.connect(self.settingsRequested.emit)
 
-        self._viewMenu = self.addMenu("View")
+        self._viewMenu = ThemedMenu("View", theme, self)
+        self.addMenu(self._viewMenu)
 
     def viewMenu(self):
         """Lets a later-built widget (the canvas view, in particular) add

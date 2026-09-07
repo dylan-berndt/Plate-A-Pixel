@@ -3,6 +3,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt, Signal
 
 from .elements import SectionLabel, PaletteRow, IconButton, Icons, Theme
+from .nineSlice import NineSliceFrame, STANDARD_SCALE
 
 
 class PaletteRail(QWidget):
@@ -71,12 +72,11 @@ class PaletteRail(QWidget):
         backgroundRow = QWidget()
         # See the identical note on _rowsContainer above.
         backgroundRow.setStyleSheet("background: transparent;")
-        from PySide6.QtWidgets import QHBoxLayout, QLabel
+        from PySide6.QtWidgets import QHBoxLayout
         bgLayout = QHBoxLayout(backgroundRow)
         bgLayout.setContentsMargins(2, 2, 2, 2)
-        swatch = QLabel()
+        swatch = NineSliceFrame("#ffffff", scale=STANDARD_SCALE)
         swatch.setFixedSize(18, 18)
-        swatch.setStyleSheet(f"background: #ffffff; border: {self._theme.borderWidth}px solid {self._theme.ink};")
         bgLayout.addWidget(swatch)
         bgLayout.addWidget(SectionLabel("Background", theme=self._theme), 1)
         self._backgroundToggle = IconButton(

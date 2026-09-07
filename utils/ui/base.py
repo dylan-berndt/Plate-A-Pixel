@@ -109,6 +109,17 @@ class Theme:
     # QSS is Qt's per-widget stylesheet language; hover/pressed/disabled are
     # handled by Qt itself via these pseudo-states instead of the manual
     # istate tracking the old pygame Element tree needed.
+    #
+    # QPushButton/QLineEdit/QComboBox here are a fallback only, not the
+    # app's real button/field look any more - every custom widget that
+    # actually needs a border now paints one itself with the nine-slice
+    # art in nineSlice.py (see IconButton, NineSliceButton,
+    # NineSliceLineEdit, PillToggle, Dropdown, ViewModeTabs, ...) instead
+    # of relying on this cascading down to it. What's left leaning on
+    # this rule is genuinely native Qt chrome this app doesn't reach
+    # into - QMessageBox's Save/Discard/Cancel buttons chief among them -
+    # so it stays a plain, square, theme.borderWidth-consistent QSS
+    # border rather than also being converted to a bitmap one.
     def stylesheet(self):
         return f"""
         QWidget {{

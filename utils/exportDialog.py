@@ -1,11 +1,12 @@
 import os
 
 from PySide6.QtWidgets import (
-    QDialog, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLineEdit,
+    QDialog, QWidget, QHBoxLayout, QVBoxLayout,
     QListWidget, QMessageBox, QFileDialog,
 )
 
 from .ui import *
+from .ui.elements import NineSliceButton, NineSliceLineEdit, Text
 from .data import *
 from .meshElement import MeshElement
 
@@ -47,14 +48,13 @@ class ExportDialog(QDialog):
         layout.addLayout(form, 1)
 
         form.addWidget(SectionLabel("Destination", theme=self._theme))
-        self._folderNameEdit = QLineEdit(projectController.project.name)
+        self._folderNameEdit = NineSliceLineEdit(projectController.project.name, theme=self._theme)
         self._folderNameEdit.textChanged.connect(self._refreshValidation)
         form.addWidget(self._folderNameEdit)
         destRow = QHBoxLayout()
         self._destPreview = MonoText("", theme=self._theme)
         destRow.addWidget(self._destPreview, 1)
-        browseButton = QPushButton("Choose Location...")
-        browseButton.clicked.connect(self._chooseParentDir)
+        browseButton = NineSliceButton("Choose Location...", onClick=self._chooseParentDir, theme=self._theme)
         destRow.addWidget(browseButton)
         form.addLayout(destRow)
 
@@ -90,11 +90,9 @@ class ExportDialog(QDialog):
 
         buttonRow = QHBoxLayout()
         buttonRow.addStretch(1)
-        cancelButton = QPushButton("Cancel")
-        cancelButton.clicked.connect(self.reject)
+        cancelButton = NineSliceButton("Cancel", onClick=self.reject, theme=self._theme)
         buttonRow.addWidget(cancelButton)
-        self._exportButton = QPushButton("Export")
-        self._exportButton.clicked.connect(self._doExport)
+        self._exportButton = NineSliceButton("Export", onClick=self._doExport, theme=self._theme)
         buttonRow.addWidget(self._exportButton)
         form.addLayout(buttonRow)
 

@@ -91,10 +91,33 @@ class Button(QPushButton):
 
 
 class Dropdown(QComboBox):
-    def __init__(self, options: dict, **kwargs):
+    """A longer options dropdown (buildOptionWidget falls back to this
+    past 4 choices - see its own note; nothing built into a real tool
+    uses it yet). The closed field's border is the app's nine-slice art
+    instead of QSS; the popup list itself stays native like every other
+    Qt popup this app doesn't reach into (QMenu's dropdown is the one
+    exception - see menuBar.py's ThemedMenu)."""
+
+    def __init__(self, options: dict, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
+        theme = theme or Theme()
         for label, value in options.items():
             self.addItem(label, value)
+        self._nineSlice = sharedNineSlice()
+        t = self._nineSlice.borderThickness(STANDARD_SCALE)
+        self.setStyleSheet(
+            f"QComboBox {{ background: transparent; border: none; padding: 2px {t + 18}px 2px {t + 4}px; }}"
+        )
+        self._backgroundColor = QColor(theme.paper)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        t = self._nineSlice.borderThickness(STANDARD_SCALE)
+        painter.fillRect(self.rect().adjusted(t, t, -t, -t), self._backgroundColor)
+        self._nineSlice.paint(painter, self.rect(), STANDARD_SCALE)
+        painter.end()
+        super().paintEvent(event)
 
 
 class Popup(QDialog):
@@ -230,6 +253,45 @@ class IconButton(QPushButton):
             self.update()
 
 
+class _NineSliceButtonBase(QPushButton):
+    """Shared paint plumbing for every other QPushButton in the app that
+    draws its own pixel-art nine-slice border/background rather than
+    relying on QSS - PillToggle, the Stepper +/- buttons, NineSliceButton,
+    and ViewModeTabs' buttons all subclass this. (IconButton doesn't -
+    its bordered=False escape hatch needs paintEvent to do nothing at
+    all, which doesn't fit this base's assume-always-bordered paintEvent
+    cleanly enough to be worth forcing.) A subclass only has to answer
+    _fillColor() (which color to paint behind the border for its current
+    state) and set its own QSS to transparent background/no border plus
+    whatever text/font rules it needs - paintEvent/enterEvent/leaveEvent
+    here are otherwise identical for all of them."""
+
+    def __init__(self, *args, borderScale: int = STANDARD_SCALE, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._nineSlice = sharedNineSlice()
+        self._borderScale = borderScale
+
+    def _fillColor(self) -> QColor:
+        raise NotImplementedError
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        t = self._nineSlice.borderThickness(self._borderScale)
+        painter.fillRect(self.rect().adjusted(t, t, -t, -t), self._fillColor())
+        self._nineSlice.paint(painter, self.rect(), self._borderScale)
+        painter.end()
+        super().paintEvent(event)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+
 # -- grouped controls --------------------------------------------------------
 
 class SegmentedControl(QWidget):
@@ -293,11 +355,11 @@ class SegmentedControl(QWidget):
             btn.setChecked(True)
 
 
-class PillToggle(QPushButton):
+class PillToggle(_NineSliceButtonBase):
     """A checkable toggle - Wand's Contiguous/Diagonal toggles. Square,
     not an actual pill, despite the name (kept for the call sites/tests
-    that already refer to it) - see Theme.borderWidth's own note on why
-    nothing here rounds its corners any more."""
+    that already refer to it) - painted with the same pixel-art
+    nine-slice border as every other bordered button in the app now."""
 
     def __init__(self, label: str, checked: bool = False, onToggle=None, theme: Theme = None, **kwargs):
         super().__init__(label, **kwargs)
@@ -306,47 +368,89 @@ class PillToggle(QPushButton):
         self.setChecked(checked)
         self.setStyleSheet(f"""
             QPushButton {{
-                background: {theme.clay200}; color: {theme.clay800};
-                border: {theme.borderWidth}px solid {theme.ink};
+                background: transparent; border: none; color: {theme.clay800};
                 padding: 5px 12px; font-size: 10.5px; font-weight: 600;
             }}
-            QPushButton:checked {{ background: {theme.glazeDark}; color: {theme.paper}; }}
+            QPushButton:checked {{ color: {theme.paper}; }}
         """)
+        self._offColor = QColor(theme.clay200)
+        self._onColor = QColor(theme.glazeDark)
         if onToggle is not None:
             self.toggled.connect(onToggle)
 
+    def _fillColor(self):
+        return self._onColor if self.isChecked() else self._offColor
 
-class _StepperButton(QPushButton):
-    """A -/+ button painted with the same pixel-art nine-slice border as
-    the rest of the app's buttons (see IconButton) instead of QSS's
-    anti-aliased border-radius. Kept private and separate from
-    IconButton rather than sharing its paintEvent: this button shows
-    text, not an icon, and has no checked/active state to track."""
 
-    def __init__(self, text: str, theme: Theme, **kwargs):
+class NineSliceButton(_NineSliceButtonBase):
+    """A plain bordered text button - Settings' Reset/Close, Export's
+    Cancel/Export/Choose Location... - painted with the app's nine-slice
+    border instead of Theme.stylesheet()'s native QSS fallback, which
+    stays in place only for genuinely native dialogs (QMessageBox and
+    friends) this class doesn't reach into."""
+
+    def __init__(self, text: str, onClick=None, theme: Theme = None, **kwargs):
         super().__init__(text, **kwargs)
-        self.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 12px; padding: 0; }")
-        self._nineSlice = sharedNineSlice()
+        theme = theme or Theme()
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none; color: {theme.ink};
+                padding: 6px 14px;
+            }}
+        """)
         self._paperColor = QColor(theme.paper)
         self._hoverColor = QColor(theme.clay200)
+        self._pressedColor = QColor(theme.clay300)
+        if onClick is not None:
+            self.clicked.connect(onClick)
+
+    def _fillColor(self):
+        if self.isDown():
+            return self._pressedColor
+        if self.underMouse():
+            return self._hoverColor
+        return self._paperColor
+
+
+class NineSliceLineEdit(QLineEdit):
+    """A QLineEdit bordered with the app's nine-slice art instead of QSS -
+    Export's destination-folder field. PaletteRow's inline rename field
+    stays genuinely borderless on purpose (see its own note there), so
+    it doesn't use this."""
+
+    def __init__(self, text: str = "", theme: Theme = None, **kwargs):
+        super().__init__(text, **kwargs)
+        theme = theme or Theme()
+        self.setFrame(False)
+        self._nineSlice = sharedNineSlice()
+        t = self._nineSlice.borderThickness(STANDARD_SCALE)
+        self.setStyleSheet("QLineEdit { background: transparent; border: none; padding: 3px; }")
+        self.setTextMargins(t + 2, t, t + 2, t)
+        self._backgroundColor = QColor(theme.paper)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        color = self._hoverColor if self.underMouse() else self._paperColor
         t = self._nineSlice.borderThickness(STANDARD_SCALE)
-        painter.fillRect(self.rect().adjusted(t, t, -t, -t), color)
+        painter.fillRect(self.rect().adjusted(t, t, -t, -t), self._backgroundColor)
         self._nineSlice.paint(painter, self.rect(), STANDARD_SCALE)
         painter.end()
         super().paintEvent(event)
 
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self.update()
 
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self.update()
+class _StepperButton(_NineSliceButtonBase):
+    """A -/+ button - see _NineSliceButtonBase for the shared paint
+    plumbing. Kept private: this button shows text, not an icon, and has
+    no checked/active state to track, so it doesn't fit IconButton."""
+
+    def __init__(self, text: str, theme: Theme, **kwargs):
+        super().__init__(text, **kwargs)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 12px; padding: 0; }")
+        self._paperColor = QColor(theme.paper)
+        self._hoverColor = QColor(theme.clay200)
+
+    def _fillColor(self):
+        return self._hoverColor if self.underMouse() else self._paperColor
 
 
 class Stepper(QWidget):
@@ -426,12 +530,9 @@ class PaletteRow(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(7)
 
-        swatch = QLabel()
-        swatch.setFixedSize(18, 18)
         r, g, b = (int(c) for c in color)
-        swatch.setStyleSheet(
-            f"background: rgb({r},{g},{b}); border: {theme.borderWidth}px solid {theme.ink};"
-        )
+        swatch = NineSliceFrame(f"#{r:02x}{g:02x}{b:02x}", scale=STANDARD_SCALE)
+        swatch.setFixedSize(18, 18)
         layout.addWidget(swatch)
 
         textColumn = QVBoxLayout()
@@ -475,15 +576,52 @@ class PaletteRow(QWidget):
         self._nameEdit.setText(name)
 
 
+class _ViewModeButton(_NineSliceButtonBase):
+    """One Canvas/Layer/Mesh button in ViewModeTabs - see
+    _NineSliceButtonBase for the shared paint plumbing. Active/hover/
+    default just pick a different fill color, same as every other
+    bordered button in the app; text color still needs its own QSS
+    since _fillColor() only controls the background."""
+
+    def __init__(self, text: str, theme: Theme, **kwargs):
+        super().__init__(text, **kwargs)
+        self._theme = theme
+        self._active = False
+        self.setCursor(Qt.PointingHandCursor)
+        self._applyTextStyle()
+
+    def setActive(self, active: bool):
+        self._active = active
+        self._applyTextStyle()
+        self.update()
+
+    def _applyTextStyle(self):
+        theme = self._theme
+        color = theme.ink if self._active else theme.paper
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none; color: {color};
+                font-size: 10.5px; font-weight: 700; padding: 0 14px;
+            }}
+        """)
+
+    def _fillColor(self):
+        theme = self._theme
+        if self._active:
+            return QColor(theme.paper)
+        if self.underMouse():
+            return QColor(theme.clay600)
+        return QColor(theme.clay800)
+
+
 class ViewModeTabs(QWidget):
     """The small "2D"/"3D" switcher pinned to the work area's top-left
     corner (see AppWindow), floating on top of the canvas/mesh panes
     rather than laid out beside them - the caller parents this to the
     work area and positions/raises it, this class just renders and
-    reports clicks. Square corners and theme.borderWidth all around,
-    same as every other bordered element in the app now - see that
-    field's own note on why nothing here rounds a corner or draws a
-    thicker/thinner border than anything else.
+    reports clicks. Its buttons paint the same pixel-art nine-slice
+    border as everything else in the app now (see _ViewModeButton) -
+    square corners, same width, no QSS border of its own.
 
     Not built on Tab/TabBar: those are one-per-open-project (dirty dot,
     close button, unbounded count) - this is a fixed two-entry mode
@@ -523,13 +661,12 @@ class ViewModeTabs(QWidget):
         # of fighting Qt's default toggle behavior.
         self._buttons = {}
         for mode in modes:
-            button = QPushButton(mode)
+            button = _ViewModeButton(mode, theme)
             # Height fixed for a consistent tab strip; width left to
             # QPushButton's own sizeHint (text plus the QSS padding
             # below) rather than a shared fixed size tuned for "2D"/"3D" -
             # that clipped/cramped longer labels like "Canvas"/"Mesh".
             button.setFixedHeight(28)
-            button.setCursor(Qt.PointingHandCursor)
             button.clicked.connect(lambda checked=False, m=mode: self._select(m))
             layout.addWidget(button)
             self._buttons[mode] = button
@@ -549,22 +686,8 @@ class ViewModeTabs(QWidget):
         self.adjustSize()
 
     def _applyStyles(self):
-        theme = self._theme
         for mode, button in self._buttons.items():
-            active = mode == self._active
-            bg = theme.paper if active else theme.clay800
-            fg = theme.ink if active else theme.paper
-            hoverBg = theme.paper if active else theme.clay600
-            button.setStyleSheet(f"""
-                QPushButton {{
-                    background: {bg}; color: {fg};
-                    border: {theme.borderWidth}px solid {theme.ink};
-                    border-top: none;
-                    font-size: 10.5px; font-weight: 700;
-                    padding: 0 14px;
-                }}
-                QPushButton:hover {{ background: {hoverBg}; }}
-            """)
+            button.setActive(mode == self._active)
 
     def _select(self, mode):
         if mode != self._active:
@@ -731,7 +854,7 @@ def buildOptionWidget(option, currentValue, onChange, theme: Theme = None):
     if option.optionType == "dropdown":
         if len(option.options) <= 4:
             return SegmentedControl(option.options, selected=currentValue, onChange=onChange, theme=theme)
-        dropdown = Dropdown(option.options)
+        dropdown = Dropdown(option.options, theme=theme)
         index = dropdown.findData(currentValue)
         if index >= 0:
             dropdown.setCurrentIndex(index)

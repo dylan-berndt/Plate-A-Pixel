@@ -1,10 +1,10 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QKeySequenceEdit, QPushButton, QMessageBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QKeySequenceEdit, QMessageBox,
 )
 from PySide6.QtGui import QKeySequence
 
 from .base import Theme
-from .elements import SectionLabel
+from .elements import SectionLabel, NineSliceButton
 from ..data.preferences import COMMANDS, KeybindConflictError
 
 
@@ -44,8 +44,7 @@ class KeybindRow(QWidget):
         self._edit.editingFinished.connect(self._onEdited)
         layout.addWidget(self._edit)
 
-        resetButton = QPushButton("Reset")
-        resetButton.clicked.connect(self._onReset)
+        resetButton = NineSliceButton("Reset", onClick=self._onReset, theme=theme)
         layout.addWidget(resetButton)
 
     def _onEdited(self):
@@ -115,7 +114,6 @@ class SettingsWindow(QDialog):
         closeRow = QHBoxLayout()
         closeRow.setContentsMargins(12, 8, 12, 12)
         closeRow.addStretch(1)
-        closeButton = QPushButton("Close")
-        closeButton.clicked.connect(self.accept)
+        closeButton = NineSliceButton("Close", onClick=self.accept, theme=theme)
         closeRow.addWidget(closeButton)
         layout.addLayout(closeRow)
