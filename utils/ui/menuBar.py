@@ -47,9 +47,9 @@ class MenuBar(QMenuBar):
         # stylesheet) is light and would otherwise cascade here too.
         self.setStyleSheet(f"""
             QMenuBar {{ background: {theme.clay950}; color: {theme.paper}; padding: 2px 6px; }}
-            QMenuBar::item {{ background: transparent; padding: 4px 10px; border-radius: 3px; }}
+            QMenuBar::item {{ background: transparent; padding: 4px 10px; }}
             QMenuBar::item:selected {{ background: rgba(255, 255, 255, 0.12); }}
-            QMenu {{ background: {theme.paper}; color: {theme.ink}; border: 1.5px solid {theme.ink}; }}
+            QMenu {{ background: {theme.paper}; color: {theme.ink}; border: {theme.borderWidth}px solid {theme.ink}; }}
             QMenu::item {{ padding: 5px 20px; }}
             QMenu::item:selected {{ background: {theme.clay200}; }}
         """)

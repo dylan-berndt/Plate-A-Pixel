@@ -84,7 +84,9 @@ class AppWindow(QMainWindow):
         # descendants (QLabel is itself a QFrame subclass).
         self._optionsBar.setObjectName("optionsBar")
         self._optionsBar.setAttribute(Qt.WA_StyledBackground, True)
-        self._optionsBar.setStyleSheet(f"QWidget#optionsBar {{ border: 2px solid {OUTLINE_COLOR}; }}")
+        self._optionsBar.setStyleSheet(
+            f"QWidget#optionsBar {{ border: {self.theme.borderWidth}px solid {OUTLINE_COLOR}; }}"
+        )
         rootLayout.addWidget(self._optionsBar)
 
         body = QHBoxLayout()

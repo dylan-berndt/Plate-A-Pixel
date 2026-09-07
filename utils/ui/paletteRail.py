@@ -76,13 +76,13 @@ class PaletteRail(QWidget):
         bgLayout.setContentsMargins(2, 2, 2, 2)
         swatch = QLabel()
         swatch.setFixedSize(18, 18)
-        swatch.setStyleSheet(f"background: #ffffff; border: 1.5px solid {self._theme.ink}; border-radius: 3px;")
+        swatch.setStyleSheet(f"background: #ffffff; border: {self._theme.borderWidth}px solid {self._theme.ink};")
         bgLayout.addWidget(swatch)
         bgLayout.addWidget(SectionLabel("Background", theme=self._theme), 1)
         self._backgroundToggle = IconButton(
             Icons.EYE_OFF, checkable=True, size=16, theme=self._theme, onClick=self._toggleBackground,
+            bordered=False,
         )
-        self._backgroundToggle.setStyleSheet("QPushButton { background: transparent; border: none; }")
         bgLayout.addWidget(self._backgroundToggle)
         outer.addWidget(backgroundRow)
 

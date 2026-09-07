@@ -67,8 +67,13 @@ class Theme:
     fontSize: int = 12
 
     # -- chrome metrics --
-    borderWidth: int = 2
-    borderRadius: int = 4
+    # The one border width used everywhere in the app - QSS borders and
+    # nine-slice borders (NineSlice.DEFAULT_CORNER_SIZE * STANDARD_SCALE,
+    # see nineSlice.py) alike - so pixel art never sits next to a
+    # thinner/thicker or anti-aliased border and reads as inconsistent.
+    # No borderRadius any more: every corner in the app is square now,
+    # nine-slice's own rounded corner art aside.
+    borderWidth: int = 4
 
     # -- legacy aliases some existing call sites still expect --
     @property
@@ -118,7 +123,6 @@ class Theme:
         QPushButton {{
             background-color: {self.paper};
             border: {self.borderWidth}px solid {self.ink};
-            border-radius: {self.borderRadius}px;
             padding: 6px;
         }}
         QPushButton:hover {{
@@ -133,8 +137,7 @@ class Theme:
         }}
         QLineEdit, QComboBox {{
             background-color: {self.paper};
-            border: {self.borderWidth - 1}px solid {self.ink};
-            border-radius: {self.borderRadius}px;
+            border: {self.borderWidth}px solid {self.ink};
             padding: 3px 6px;
         }}
         QToolTip {{

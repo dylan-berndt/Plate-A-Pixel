@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QSize, QByteArray, Signal
 from PySide6.QtGui import QPixmap, QPainter, QIcon, QColor
 from PySide6.QtSvg import QSvgRenderer
 from .base import *
-from .nineSlice import NineSliceFrame, sharedNineSlice
+from .nineSlice import NineSliceFrame, sharedNineSlice, STANDARD_SCALE
 
 
 class Text(QLabel):
@@ -169,7 +169,7 @@ class IconButton(QPushButton):
 
     def __init__(self, iconBody: str, onClick=None, checkable: bool = False, size: int = 40,
                  activeColor: str = None, iconColor: str = None, iconColorOn: str = None,
-                 theme: Theme = None, bordered: bool = True, borderScale: int = 1, **kwargs):
+                 theme: Theme = None, bordered: bool = True, borderScale: int = STANDARD_SCALE, **kwargs):
         super().__init__(**kwargs)
         theme = theme or Theme()
         activeColor = activeColor or theme.glaze
@@ -294,7 +294,10 @@ class SegmentedControl(QWidget):
 
 
 class PillToggle(QPushButton):
-    """A checkable pill - Wand's Contiguous/Diagonal toggles."""
+    """A checkable toggle - Wand's Contiguous/Diagonal toggles. Square,
+    not an actual pill, despite the name (kept for the call sites/tests
+    that already refer to it) - see Theme.borderWidth's own note on why
+    nothing here rounds its corners any more."""
 
     def __init__(self, label: str, checked: bool = False, onToggle=None, theme: Theme = None, **kwargs):
         super().__init__(label, **kwargs)
@@ -304,7 +307,7 @@ class PillToggle(QPushButton):
         self.setStyleSheet(f"""
             QPushButton {{
                 background: {theme.clay200}; color: {theme.clay800};
-                border: 1.5px solid {theme.ink}; border-radius: 12px;
+                border: {theme.borderWidth}px solid {theme.ink};
                 padding: 5px 12px; font-size: 10.5px; font-weight: 600;
             }}
             QPushButton:checked {{ background: {theme.glazeDark}; color: {theme.paper}; }}
@@ -331,9 +334,9 @@ class _StepperButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         color = self._hoverColor if self.underMouse() else self._paperColor
-        t = self._nineSlice.borderThickness(1)
+        t = self._nineSlice.borderThickness(STANDARD_SCALE)
         painter.fillRect(self.rect().adjusted(t, t, -t, -t), color)
-        self._nineSlice.paint(painter, self.rect(), 1)
+        self._nineSlice.paint(painter, self.rect(), STANDARD_SCALE)
         painter.end()
         super().paintEvent(event)
 
@@ -427,7 +430,7 @@ class PaletteRow(QWidget):
         swatch.setFixedSize(18, 18)
         r, g, b = (int(c) for c in color)
         swatch.setStyleSheet(
-            f"background: rgb({r},{g},{b}); border: 1.5px solid {theme.ink}; border-radius: 3px;"
+            f"background: rgb({r},{g},{b}); border: {theme.borderWidth}px solid {theme.ink};"
         )
         layout.addWidget(swatch)
 
@@ -477,20 +480,19 @@ class ViewModeTabs(QWidget):
     corner (see AppWindow), floating on top of the canvas/mesh panes
     rather than laid out beside them - the caller parents this to the
     work area and positions/raises it, this class just renders and
-    reports clicks. Squared tops with rounded bottoms (via QSS's
-    per-corner border-radius) are what visually mark this as a floating
-    overlay chip rather than another row of the rectangular project
-    TabBar above it.
+    reports clicks. Square corners and theme.borderWidth all around,
+    same as every other bordered element in the app now - see that
+    field's own note on why nothing here rounds a corner or draws a
+    thicker/thinner border than anything else.
 
     Not built on Tab/TabBar: those are one-per-open-project (dirty dot,
     close button, unbounded count) - this is a fixed two-entry mode
-    switch with a different shape, so reusing them would mean stripping
-    more than it'd share.
+    switch, so reusing them would mean stripping more than it'd share.
 
     Deliberately has no background/border of its own - only the buttons
-    are styled, so nothing shows here but their own squared-top/rounded-
-    bottom shapes floating directly over whatever pane is behind them.
-    (No WA_StyledBackground, and none should be added: setting that
+    are styled, so nothing shows here but their own bordered shapes
+    floating directly over whatever pane is behind them. (No
+    WA_StyledBackground, and none should be added: setting that
     attribute makes a plain QWidget start painting a background from the
     app's stylesheet even with no per-instance stylesheet of its own -
     see the identical note on Text.setStyleSheet - which is exactly the
@@ -556,10 +558,8 @@ class ViewModeTabs(QWidget):
             button.setStyleSheet(f"""
                 QPushButton {{
                     background: {bg}; color: {fg};
-                    border: 1.5px solid {theme.ink};
+                    border: {theme.borderWidth}px solid {theme.ink};
                     border-top: none;
-                    border-top-left-radius: 0px; border-top-right-radius: 0px;
-                    border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
                     font-size: 10.5px; font-weight: 700;
                     padding: 0 14px;
                 }}

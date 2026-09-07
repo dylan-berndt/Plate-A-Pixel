@@ -4,9 +4,7 @@ from PySide6.QtGui import QPainter, QColor
 from PySide6.QtCore import Qt
 
 from .elements import IconButton, Icons, SectionLabel, Stepper, Theme
-from .nineSlice import sharedNineSlice
-
-RAIL_BORDER_SCALE = 2
+from .nineSlice import sharedNineSlice, STANDARD_SCALE
 
 
 def selectionHeightText(canvas):
@@ -44,7 +42,7 @@ class ToolRail(QWidget):
         self._nineSlice = sharedNineSlice()
 
         layout = QVBoxLayout(self)
-        edgeThickness = self._nineSlice.borderThickness(RAIL_BORDER_SCALE)
+        edgeThickness = self._nineSlice.borderThickness(STANDARD_SCALE)
         layout.setContentsMargins(8, 14, 8 + edgeThickness, 14)
         layout.setSpacing(8)
         layout.setAlignment(layout.alignment())
@@ -84,7 +82,7 @@ class ToolRail(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.fillRect(self.rect(), self._backgroundColor)
-        self._nineSlice.paintEdge(painter, self.rect(), "right", RAIL_BORDER_SCALE)
+        self._nineSlice.paintEdge(painter, self.rect(), "right", STANDARD_SCALE)
         painter.end()
         super().paintEvent(event)
 

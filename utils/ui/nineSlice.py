@@ -11,6 +11,15 @@ ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
 DEFAULT_SLICE_PATH = ASSETS_DIR / "slice.png"
 DEFAULT_CORNER_SIZE = 2
 
+# The one scale every nine-slice-bordered widget in the app should use -
+# NineSliceFrame, NineSliceEdge, ToolRail, IconButton, Stepper's +/-
+# buttons, all of it. Pixel art reads as broken the moment two borders
+# drawn at different scales sit near each other (one chunkier than the
+# other despite being "the same border"), so this is the single place
+# that thickness (DEFAULT_CORNER_SIZE * STANDARD_SCALE) is decided,
+# instead of each widget picking its own scale and hoping they agree.
+STANDARD_SCALE = 2
+
 # One NineSlice per (path, cornerSize), shared by every NineSliceFrame/
 # NineSliceEdge/IconButton instance and anything else that paints with
 # one - slicing the same source image again for every widget would just
@@ -173,7 +182,7 @@ class NineSliceFrame(QWidget):
     """
 
     def __init__(
-        self, backgroundColor: str, scale: int = 3,
+        self, backgroundColor: str, scale: int = STANDARD_SCALE,
         imagePath=DEFAULT_SLICE_PATH, cornerSize: int = DEFAULT_CORNER_SIZE,
         **kwargs,
     ):
@@ -217,7 +226,7 @@ class NineSliceEdge(QWidget):
     """
 
     def __init__(
-        self, backgroundColor: str, side: str, scale: int = 2,
+        self, backgroundColor: str, side: str, scale: int = STANDARD_SCALE,
         imagePath=DEFAULT_SLICE_PATH, cornerSize: int = DEFAULT_CORNER_SIZE,
         **kwargs,
     ):
