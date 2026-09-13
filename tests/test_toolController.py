@@ -76,7 +76,7 @@ def test_drag_and_release_are_no_ops_for_the_wand_tool(app):
 
 def test_full_brush_gesture_produces_exactly_one_undo_step(app):
     app.toolController.registry.setActiveTool("brushSelect")
-    app.toolController.registry.activeTool.selections["size"] = 0
+    app.toolController.registry.activeTool.selections["size"] = 1  # smallest real brush - just the one cell
 
     app.toolController.press((0, 0))
     app.toolController.drag((0, 1))
@@ -90,7 +90,7 @@ def test_full_brush_gesture_produces_exactly_one_undo_step(app):
 
 def test_drag_and_release_keep_targeting_the_project_active_at_press_time(app, imagePath):
     app.toolController.registry.setActiveTool("brushSelect")
-    app.toolController.registry.activeTool.selections["size"] = 0
+    app.toolController.registry.activeTool.selections["size"] = 1  # smallest real brush - just the one cell
     first = app.activeController
 
     app.toolController.press((0, 0))

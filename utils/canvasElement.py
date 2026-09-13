@@ -31,6 +31,14 @@ class CanvasArtist(QWidget):
     # looping smoothly).
     _DASH_PATTERN = [3.0, 2.0]
 
+    # BrushSelectTool's hover outline (see _paintBrushPreview) is drawn
+    # black-and-white, not a single ink color, so it stays visible over
+    # any canvas color including near-black pixels - equal on/off lengths
+    # so the two colors alternate evenly with no uncovered gap between
+    # them (unlike _DASH_PATTERN above, which leaves the "off" half
+    # transparent on purpose for the real, colored selection outline).
+    _BRUSH_DASH_PATTERN = [3.0, 3.0]
+
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         self._theme = theme or Theme()
@@ -340,7 +348,15 @@ class CanvasArtist(QWidget):
         repaints in response to real mouse movement (not a forever-
         running timer), and a radius-35 brush is at most a 71x71 mask -
         cheap enough that caching it would just be complexity for no
-        measurable win."""
+        measurable win.
+
+        Drawn in alternating black/white dashes (see _BRUSH_DASH_PATTERN)
+        rather than a single ink-colored line: a solid dark outline
+        disappeared entirely over a canvas pixel that's already near-
+        black. Two drawPath calls over the same (tiny) path, the second
+        offset by exactly one dash length so white fills in precisely
+        where black leaves off - static, not animated like the real
+        selection's marching ants, so there's no march offset here."""
         if self._brushPreview is None:
             return
         row, col, radius = self._brushPreview
@@ -354,12 +370,24 @@ class CanvasArtist(QWidget):
         painter.scale(cell, cell)
         painter.translate(left, top)
 
-        penWidth = min(2.0, max(0.75, cell * 0.08)) / cell
-        pen = QPen(QColor(self._theme.ink))
-        pen.setWidthF(penWidth)
-        painter.setPen(pen)
+        path = self._maskOutlinePath(mask, ys, xs)
         painter.setBrush(Qt.NoBrush)
-        painter.drawPath(self._maskOutlinePath(mask, ys, xs))
+        penWidth = min(2.0, max(0.75, cell * 0.08)) / cell
+
+        blackPen = QPen(QColor(self._theme.ink))
+        blackPen.setWidthF(penWidth)
+        blackPen.setDashPattern(self._BRUSH_DASH_PATTERN)
+        blackPen.setDashOffset(0.0)
+        painter.setPen(blackPen)
+        painter.drawPath(path)
+
+        whitePen = QPen(QColor(self._theme.paper))
+        whitePen.setWidthF(penWidth)
+        whitePen.setDashPattern(self._BRUSH_DASH_PATTERN)
+        whitePen.setDashOffset(self._BRUSH_DASH_PATTERN[0])
+        painter.setPen(whitePen)
+        painter.drawPath(path)
+
         painter.restore()
 
     def _buildFillImage(self, mask, fillColor, alpha=0.38):

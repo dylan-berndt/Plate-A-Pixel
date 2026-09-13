@@ -80,7 +80,7 @@ def test_wand_tool_press_respects_diagonal_option(controller):
 
 def test_brush_select_tool_press_stamps_a_selection_around_the_position(controller):
     tool = BrushSelectTool()
-    tool.selections["size"] = 1
+    tool.selections["size"] = 2  # size=1 is just the one cell now - see Canvas._circleMask
 
     tool.onPress(controller.canvasController, (0, 0))
 
@@ -88,12 +88,13 @@ def test_brush_select_tool_press_stamps_a_selection_around_the_position(controll
     assert canvas.selection[0, 0]
     assert canvas.selection[0, 1]
     assert canvas.selection[1, 0]
-    assert not canvas.selection[1, 1]
+    assert canvas.selection[1, 1]
+    assert canvas.selection.sum() == 4
 
 
 def test_brush_select_tool_drag_adds_to_the_selection(controller):
     tool = BrushSelectTool()
-    tool.selections["size"] = 0
+    tool.selections["size"] = 1  # smallest real brush - just the one cell
     tool.selections["mode"] = "add"
 
     tool.onPress(controller.canvasController, (0, 0))
@@ -107,7 +108,7 @@ def test_brush_select_tool_drag_adds_to_the_selection(controller):
 
 def test_brush_select_tool_drag_after_a_replace_press_still_builds_up_the_stroke(controller):
     tool = BrushSelectTool()
-    tool.selections["size"] = 0
+    tool.selections["size"] = 1  # smallest real brush - just the one cell
     tool.selections["mode"] = "replace"
 
     tool.onPress(controller.canvasController, (0, 0))

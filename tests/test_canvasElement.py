@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from PIL import Image
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtGui import QImage, QMouseEvent, QPainter
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter
 
 from utils.canvasElement import CanvasArea, CanvasArtist
 from utils.controllers.appController import AppController
@@ -117,6 +117,32 @@ def test_paint_brush_preview_matches_canvas_brush_outline_mask_without_raising(c
     painter = QPainter(image)
     artist._paintBrushPreview(painter, canvas, artist._cellSize(), artist._imageOrigin())  # should not raise
     painter.end()
+
+
+def test_paint_brush_preview_uses_both_ink_and_paper_so_it_stays_visible_on_any_pixel(controller):
+    # A single ink-colored line disappeared entirely over a near-black
+    # canvas pixel - the outline alternates ink/paper dashes instead (see
+    # _BRUSH_DASH_PATTERN), so at least one of the two always contrasts
+    # against whatever's underneath.
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    artist.resize(240, 240)
+    canvas = controller.project.canvas
+    artist.setBrushPreview(3, 3, 3)
+
+    image = QImage(240, 240, QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    cell = artist._cellSize()
+    origin = artist._imageOrigin()
+    artist._paintBrushPreview(painter, canvas, cell, origin)
+    painter.end()
+
+    ink = QColor(artist._theme.ink).getRgb()[:3]
+    paper = QColor(artist._theme.paper).getRgb()[:3]
+    pixels = {image.pixelColor(x, y).getRgb()[:3] for y in range(240) for x in range(240)}
+    assert ink in pixels
+    assert paper in pixels
 
 
 def test_paint_brush_preview_is_a_no_op_without_a_preview_set(controller):

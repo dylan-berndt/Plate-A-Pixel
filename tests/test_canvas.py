@@ -197,28 +197,64 @@ def test_valid_neighbors_at_corner_respects_canvas_bounds(canvas):
     assert len(canvas.validNeighbors((0, 0), diagonal=True)) == 3
 
 
-def test_brush_select_grabs_every_cell_within_radius_regardless_of_color(canvas):
-    canvas.brushSelect((0, 0), radius=1, mode="replace")
+def test_brush_select_ignores_color(canvas):
+    # At radius 2 (reachable from the real tool - see the radius=1 test
+    # below for the slider's actual minimum), (0, 0)'s neighborhood
+    # spans both RED_BLOCK and background - the stamp shouldn't care.
+    canvas.brushSelect((0, 0), radius=2, mode="replace")
 
     assert canvas.selection[0, 0]
     assert canvas.selection[0, 1]
     assert canvas.selection[1, 0]
-    assert not canvas.selection[1, 1]  # sqrt(2) > 1
-    assert canvas.selection.sum() == 3
+    assert canvas.selection[1, 1]
+    assert canvas.selection.sum() == 4  # a solid 2x2 block - see test_brush_outline_mask_is_circular... for a radius large enough to actually show curvature
 
 
-def test_brush_select_radius_zero_selects_only_the_center_cell(canvas):
-    canvas.brushSelect((2, 2), radius=0, mode="replace")
+def test_brush_select_radius_one_selects_only_the_center_cell(canvas):
+    # The smallest a real brush can be (BrushSelectTool's "size" slider
+    # bottoms out at 1). Strict `<` (see Canvas._circleMask) means this
+    # doesn't also catch the four cardinal neighbors (distance exactly
+    # 1) the way `<=` used to - that stamped a 5-cell plus shape for
+    # what should read as a single pixel.
+    canvas.brushSelect((2, 2), radius=1, mode="replace")
 
     assert canvas.selection.sum() == 1
     assert canvas.selection[2, 2]
 
 
-def test_brush_select_add_mode_unions_with_the_existing_selection(canvas):
-    canvas.brushSelect((0, 0), radius=0, mode="replace")
+def test_brush_select_radius_zero_selects_nothing(canvas):
+    # Not reachable through the real brush tool (its slider's minimum is
+    # 1) - Canvas.brushSelect's own contract is a strict "<", so distance
+    # 0 no longer counts as "within" a radius of 0 either. See
+    # Canvas._circleMask's docstring for why this trade-off is fine.
+    canvas.brushSelect((2, 2), radius=0, mode="replace")
 
-    canvas.brushSelect((5, 5), radius=0, mode="add")
+    assert canvas.selection.sum() == 0
+
+
+def test_brush_select_add_mode_unions_with_the_existing_selection(canvas):
+    canvas.brushSelect((0, 0), radius=1, mode="replace")
+
+    canvas.brushSelect((5, 5), radius=1, mode="add")
 
     assert canvas.selection.sum() == 2
     assert canvas.selection[0, 0]
     assert canvas.selection[5, 5]
+
+
+def test_brush_outline_mask_is_circular_not_square_at_larger_radii():
+    # A plain square brush would fill every corner of its bounding box;
+    # a circular one (strict `<` - see Canvas._circleMask) does not. A
+    # fresh larger canvas, not the shared 6x6 fixture, so the full
+    # (2*radius+1)-square bounding box fits without being clipped by the
+    # canvas edge.
+    big = Canvas(np.zeros((20, 20, 3), dtype=np.uint8), scale=1)
+
+    mask, top, left = big.brushOutlineMask((10, 10), radius=4)
+
+    assert mask.shape == (9, 9)
+    assert mask[4, 4]  # center
+    assert not mask[0, 0]  # every corner of the bounding box...
+    assert not mask[0, -1]
+    assert not mask[-1, 0]
+    assert not mask[-1, -1]  # ...is outside the circle

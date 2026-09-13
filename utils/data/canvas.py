@@ -161,13 +161,23 @@ class Canvas:
         self.alterSelection(newSelection, mode)
 
     def _circleMask(self, position, radius):
-        """Local boolean mask of every cell within `radius` (Euclidean) of
-        `position` - bounded to radius's own bounding box intersected with
-        the canvas, not a full map.shape-sized array, since neither
-        brushSelect below nor a hover preview (see BrushSelectTool/
-        CanvasArtist) ever need cells evaluated nowhere near `position` -
-        only large enough to place back at (top, left). Returns
-        (mask, top, left)."""
+        """Local boolean mask of every cell strictly within `radius`
+        (Euclidean) of `position` - bounded to radius's own bounding box
+        intersected with the canvas, not a full map.shape-sized array,
+        since neither brushSelect below nor a hover preview (see
+        BrushSelectTool/CanvasArtist) ever need cells evaluated nowhere
+        near `position` - only large enough to place back at (top, left).
+        Returns (mask, top, left).
+
+        Strictly `<`, not `<=`: at radius=1 (the smallest a real brush
+        can be - see BrushSelectTool's "size" slider, whose minimum is 1),
+        `<=` also catches the four cardinal neighbors (distance exactly
+        1), stamping a 5-cell plus shape for what a user would expect to
+        be a single pixel. `<` fixes that (radius=1 selects only the
+        center) at the cost of radius=0 now selecting nothing rather than
+        just the center - not a real behavior change in practice, since
+        the slider never goes below 1; only direct Canvas API callers
+        (and their tests) could ever pass 0."""
         y, x = position
         rows, cols = self.map.shape
         top = max(0, y - radius)
@@ -175,7 +185,7 @@ class Canvas:
         bottom = min(rows, y + radius + 1)
         right = min(cols, x + radius + 1)
         yGrid, xGrid = np.ogrid[top:bottom, left:right]
-        mask = (yGrid - y) ** 2 + (xGrid - x) ** 2 <= radius ** 2
+        mask = (yGrid - y) ** 2 + (xGrid - x) ** 2 < radius ** 2
         return mask, top, left
 
     def brushSelect(self, position, radius, mode="replace"):

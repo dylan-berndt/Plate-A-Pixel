@@ -67,11 +67,11 @@ def test_gesture_collapses_repeated_edits_into_one_undo_step(controller):
     canvas = controller.project.canvas
     controller.beginGesture()
     with controller.editing(signal=controller.selectionChanged):
-        canvas.brushSelect((0, 0), radius=0, mode="add")
+        canvas.brushSelect((0, 0), radius=1, mode="add")  # radius=1 selects just the one cell - see Canvas._circleMask
     with controller.editing(signal=controller.selectionChanged):
-        canvas.brushSelect((0, 1), radius=0, mode="add")
+        canvas.brushSelect((0, 1), radius=1, mode="add")
     with controller.editing(signal=controller.selectionChanged):
-        canvas.brushSelect((1, 0), radius=0, mode="add")
+        canvas.brushSelect((1, 0), radius=1, mode="add")
     controller.endGesture()
 
     assert canvas.selection.sum() == 3
