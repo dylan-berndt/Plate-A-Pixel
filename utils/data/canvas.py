@@ -160,14 +160,40 @@ class Canvas:
 
         self.alterSelection(newSelection, mode)
 
+    def _circleMask(self, position, radius):
+        """Local boolean mask of every cell within `radius` (Euclidean) of
+        `position` - bounded to radius's own bounding box intersected with
+        the canvas, not a full map.shape-sized array, since neither
+        brushSelect below nor a hover preview (see BrushSelectTool/
+        CanvasArtist) ever need cells evaluated nowhere near `position` -
+        only large enough to place back at (top, left). Returns
+        (mask, top, left)."""
+        y, x = position
+        rows, cols = self.map.shape
+        top = max(0, y - radius)
+        left = max(0, x - radius)
+        bottom = min(rows, y + radius + 1)
+        right = min(cols, x + radius + 1)
+        yGrid, xGrid = np.ogrid[top:bottom, left:right]
+        mask = (yGrid - y) ** 2 + (xGrid - x) ** 2 <= radius ** 2
+        return mask, top, left
+
     def brushSelect(self, position, radius, mode="replace"):
         """Every cell within `radius` of `position` (Euclidean, in grid
         cells) - color-blind, unlike bucketSelect, since a brush stamps an
         area rather than picking out one color."""
-        y, x = position
-        yGrid, xGrid = np.ogrid[:self.map.shape[0], :self.map.shape[1]]
-        newSelection = (yGrid - y) ** 2 + (xGrid - x) ** 2 <= radius ** 2
+        mask, top, left = self._circleMask(position, radius)
+        newSelection = np.zeros_like(self.map, dtype=np.bool)
+        newSelection[top:top + mask.shape[0], left:left + mask.shape[1]] = mask
         self.alterSelection(newSelection, mode)
+
+    def brushOutlineMask(self, position, radius):
+        """Exactly the shape brushSelect above would stamp, without
+        touching selection - what BrushSelectTool's hover preview (see
+        CanvasArtist.setBrushPreview) traces an outline around, so the
+        preview can never drift from what a click would actually select.
+        Returns (mask, top, left) - see _circleMask."""
+        return self._circleMask(position, radius)
 
     def transformSelection(self, direction=1):
         self.layers[self.selection] += direction

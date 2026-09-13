@@ -54,6 +54,27 @@ class CanvasArtist(QWidget):
         self._marchTimer.timeout.connect(self._advanceMarch)
         self._marchTimer.start()
 
+        # Outline path + fill image cached from the selection array that
+        # built them (see _paintSelectionOverlay) - identity, not
+        # equality: Canvas.alterSelection always reassigns self.selection
+        # to a brand new array rather than mutating one in place, so a
+        # plain `is` check is a free, exact "did the selection actually
+        # change since last frame" test. Without this, both were being
+        # rebuilt from scratch on every single marching-ants timer tick
+        # (~12.5/sec) forever while any selection existed, at a cost
+        # proportional to selection complexity - the animation itself only
+        # ever changes _marchOffset, so that was all wasted work.
+        self._selectionCacheRef = None
+        self._marchLocalPath = None
+        self._fillImage = None
+        self._fillBuffer = None  # keep alive - QImage doesn't copy it
+
+        # (row, col, radius) of BrushSelectTool's hover outline - see
+        # setBrushPreview/clearBrushPreview, driven by CanvasArea. None
+        # when the brush isn't the active tool or the pointer isn't over
+        # the canvas.
+        self._brushPreview = None
+
     def _advanceMarch(self):
         if self._projectController is None:
             return
@@ -84,6 +105,19 @@ class CanvasArtist(QWidget):
         self.zoom = 1.0
         self.position = Vector2(0, 0)
         self.update()
+
+    def setBrushPreview(self, row, col, radius):
+        """Called by CanvasArea as the pointer moves while BrushSelectTool
+        is active - (row, col) is the cell under the cursor (clamped, so
+        it keeps showing at the edge mid-drag exactly like the stamp
+        itself does - see CanvasArea._updateBrushPreview)."""
+        self._brushPreview = (row, col, radius)
+        self.update()
+
+    def clearBrushPreview(self):
+        if self._brushPreview is not None:
+            self._brushPreview = None
+            self.update()
 
     def zoomBy(self, factor, anchor: QPointF = None):
         newZoom = min(MAX_ZOOM, max(MIN_ZOOM, self.zoom * factor))
@@ -184,6 +218,7 @@ class CanvasArtist(QWidget):
             if cell > 0:
                 self._paintImage(painter, canvas, cell, origin)
                 self._paintSelectionOverlay(painter, canvas, cell, origin)
+                self._paintBrushPreview(painter, canvas, cell, origin)
                 self._paintOverlay(painter, canvas, cell, origin)
         else:
             self._paintEmptyState(painter)
@@ -250,33 +285,117 @@ class CanvasArtist(QWidget):
         if not selection.any():
             return
 
-        fill = QColor(self._theme.glaze)
-        fill.setAlphaF(0.38)
+        # Rebuilt only when the selection itself has actually changed
+        # since the last paint - `is`, not equality: Canvas.alterSelection
+        # always reassigns self.selection to a new array rather than
+        # mutating one in place (see alterSelection), so identity is a
+        # free, exact staleness check. Holding the actual old array here
+        # (not just id(selection)) matters: it keeps that array alive, so
+        # a *different* selection array can never happen to get allocated
+        # at the same id() an old, already-garbage-collected one held -
+        # `is` can't be fooled that way, a bare id() comparison technically
+        # could be. Both the outline path and the fill image are built
+        # once in *local* grid-cell units (mask[0,0] at local (0,0), one
+        # unit per cell) - view geometry (cell/origin) never invalidates
+        # the cache, it's applied as a transform at draw time instead (see
+        # below), so panning/zooming/resizing while a selection sits idle
+        # costs nothing extra either.
+        if selection is not self._selectionCacheRef:
+            ys, xs = np.nonzero(selection)
+            self._selectionCacheRef = selection
+            self._marchLocalPath = self._maskOutlinePath(selection, ys, xs)
+            self._fillImage, self._fillBuffer = self._buildFillImage(selection, self._theme.glaze)
+
+        rows, cols = selection.shape
+        painter.save()
+        painter.translate(origin)
+        painter.scale(cell, cell)
+
         painter.setPen(Qt.NoPen)
-        painter.setBrush(fill)
-        ys, xs = np.nonzero(selection)
-        for y, x in zip(ys.tolist(), xs.tolist()):
-            painter.drawRect(QRectF(origin.x() + x * cell, origin.y() + y * cell, cell, cell))
+        painter.drawImage(QRectF(0, 0, cols, rows), self._fillImage)
 
         # Pen width (and, since Qt expresses dash lengths in pen-width
         # units, the dashes with it) scales with the current zoom level:
         # a fixed screen-pixel pen looks chunky relative to tiny
-        # zoomed-out cells and thin relative to huge zoomed-in ones.
-        penWidth = min(3.0, max(1.0, cell * 0.12))
+        # zoomed-out cells and thin relative to huge zoomed-in ones. The
+        # path itself is in local (1-unit-per-cell) space under the
+        # scale(cell, cell) above, so the pen width has to be converted
+        # back to local units too, or it would scale by `cell` a second
+        # time on top of this already-cell-relative sizing.
+        penWidth = min(3.0, max(1.0, cell * 0.12)) / cell
         pen = QPen(QColor(self._theme.glaze))
         pen.setWidthF(penWidth)
         pen.setDashPattern(self._DASH_PATTERN)
         pen.setDashOffset(self._marchOffset)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        painter.drawPath(self._selectionOutlinePath(selection, ys, xs, cell, origin))
+        painter.drawPath(self._marchLocalPath)
+        painter.restore()
 
-    def _selectionOutlinePath(self, selection, ys, xs, cell, origin):
-        """The selection's actual silhouette, not its bounding box: each
-        selected cell contributes only the sides that border an
-        unselected cell (or the canvas edge), so the ants hug the real
-        shape - a plain filled block's interior edges are skipped, but an
-        L-shape or a diagonal pair still outlines correctly.
+    def _paintBrushPreview(self, painter: QPainter, canvas, cell, origin):
+        """BrushSelectTool's hover outline (see setBrushPreview) - the
+        exact cells a click would stamp, grid-aligned, not a circle
+        glyph. Recomputed straight from Canvas.brushOutlineMask on every
+        paint rather than cached like the selection above: it only
+        repaints in response to real mouse movement (not a forever-
+        running timer), and a radius-35 brush is at most a 71x71 mask -
+        cheap enough that caching it would just be complexity for no
+        measurable win."""
+        if self._brushPreview is None:
+            return
+        row, col, radius = self._brushPreview
+        mask, top, left = canvas.brushOutlineMask((row, col), radius)
+        ys, xs = np.nonzero(mask)
+        if ys.size == 0:
+            return
+
+        painter.save()
+        painter.translate(origin)
+        painter.scale(cell, cell)
+        painter.translate(left, top)
+
+        penWidth = min(2.0, max(0.75, cell * 0.08)) / cell
+        pen = QPen(QColor(self._theme.ink))
+        pen.setWidthF(penWidth)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(self._maskOutlinePath(mask, ys, xs))
+        painter.restore()
+
+    def _buildFillImage(self, mask, fillColor, alpha=0.38):
+        """A translucent-fill RGBA QImage, one pixel per mask cell,
+        transparent outside it - one drawImage call (in
+        _paintSelectionOverlay) instead of one drawRect per selected
+        cell, which used to run at the marching-ants animation's ~12.5fps
+        for as long as any selection existed, at a cost proportional to
+        selection size. Returns (image, buffer) - the caller must keep
+        `buffer` alive exactly like _paintImage's own _imageBuffer, since
+        QImage wraps the numpy array's memory rather than copying it."""
+        color = QColor(fillColor)
+        r, g, b, _ = color.getRgb()
+        rows, cols = mask.shape
+        rgba = np.zeros((rows, cols, 4), dtype=np.uint8)
+        rgba[mask] = (r, g, b, round(alpha * 255))
+        image = QImage(rgba.data, cols, rows, rgba.strides[0], QImage.Format_RGBA8888)
+        return image, rgba
+
+    @staticmethod
+    def _maskOutlinePath(mask, ys, xs):
+        """A boolean mask's actual silhouette, not its bounding box: each
+        True cell contributes only the sides that border a False cell (or
+        the mask's own edge), so the outline hugs the real shape - a
+        plain filled block's interior edges are skipped, but an L-shape
+        or a diagonal pair still outlines correctly. Shared by the real
+        selection (_paintSelectionOverlay) and BrushSelectTool's hover
+        preview (_paintBrushPreview) - both are just "trace this mask's
+        boundary," whether the mask is canvas.selection itself or a small
+        local brush-radius mask.
+
+        Built in local, unscaled grid-cell units - mask[0,0] at path-space
+        (0,0), one unit per cell - not screen pixels; the caller applies
+        whatever translate/scale maps that onto the canvas (see both
+        paint methods above). `ys`/`xs` are mask's own np.nonzero(mask),
+        passed in since every caller already has them.
 
         Adjacent same-line edges are merged into one continuous run
         before being added to the path (one moveTo/lineTo per run, not
@@ -288,27 +407,27 @@ class CanvasArtist(QWidget):
         which is what read as flickering once cells got small enough
         (zoomed out) that a single edge no longer spanned a full dash
         cycle."""
-        rows, cols = selection.shape
+        rows, cols = mask.shape
         horizontal, vertical = {}, {}
         for y, x in zip(ys.tolist(), xs.tolist()):
-            if y == 0 or not selection[y - 1, x]:
+            if y == 0 or not mask[y - 1, x]:
                 horizontal.setdefault(y, []).append(x)
-            if y == rows - 1 or not selection[y + 1, x]:
+            if y == rows - 1 or not mask[y + 1, x]:
                 horizontal.setdefault(y + 1, []).append(x)
-            if x == 0 or not selection[y, x - 1]:
+            if x == 0 or not mask[y, x - 1]:
                 vertical.setdefault(x, []).append(y)
-            if x == cols - 1 or not selection[y, x + 1]:
+            if x == cols - 1 or not mask[y, x + 1]:
                 vertical.setdefault(x + 1, []).append(y)
 
         path = QPainterPath()
         for lineY, xPositions in horizontal.items():
-            for start, end in self._mergeRuns(xPositions):
-                path.moveTo(origin.x() + start * cell, origin.y() + lineY * cell)
-                path.lineTo(origin.x() + end * cell, origin.y() + lineY * cell)
+            for start, end in CanvasArtist._mergeRuns(xPositions):
+                path.moveTo(start, lineY)
+                path.lineTo(end, lineY)
         for lineX, yPositions in vertical.items():
-            for start, end in self._mergeRuns(yPositions):
-                path.moveTo(origin.x() + lineX * cell, origin.y() + start * cell)
-                path.lineTo(origin.x() + lineX * cell, origin.y() + end * cell)
+            for start, end in CanvasArtist._mergeRuns(yPositions):
+                path.moveTo(lineX, start)
+                path.lineTo(lineX, end)
         return path
 
     @staticmethod
@@ -440,6 +559,10 @@ class CanvasArea(QWidget):
         self._appController = appController
         self._theme = theme or Theme()
 
+        # So a plain hover (no button held) still generates move events
+        # for BrushSelectTool's preview outline - see _updateBrushPreview.
+        self.setMouseTracking(True)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.artist = artistClass(theme=self._theme)
@@ -455,6 +578,12 @@ class CanvasArea(QWidget):
         self._panning = False
         self._panOrigin = None
         self._positionOrigin = None
+
+        # A tool switch away from Brush (or to it) doesn't itself generate
+        # a mouse move - without this, switching off Brush while the
+        # pointer sits still over the canvas would leave its last preview
+        # outline stuck on screen forever.
+        appController.toolController.activeToolChanged.connect(self.artist.clearBrushPreview)
 
     def bindProject(self, projectController):
         self.artist.bindProject(projectController)
@@ -493,6 +622,8 @@ class CanvasArea(QWidget):
             if pos is not None:
                 self._appController.toolController.drag(pos, useLayers=self._useLayers)
 
+        self._updateBrushPreview(event)
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MiddleButton and self._panning:
             self._panning = False
@@ -503,6 +634,34 @@ class CanvasArea(QWidget):
             if pos is not None:
                 self._appController.toolController.release(pos, useLayers=self._useLayers)
             self._toolGestureActive = False
+
+    def leaveEvent(self, event):
+        self.artist.clearBrushPreview()
+
+    def _updateBrushPreview(self, event):
+        """BrushSelectTool's hover outline (see CanvasArtist.
+        setBrushPreview) - not itself a canvas edit, so it's decided
+        straight from the active tool/pointer position here rather than
+        going through ToolController.press/drag. While a gesture is
+        active, uses the same clamped position the drag itself uses (see
+        mouseMoveEvent above) so the preview keeps tracking at the canvas
+        edge instead of vanishing mid-stroke; otherwise a plain hover
+        outside the canvas clears it instead of clamping into view."""
+        tool = self._appController.toolController.registry.activeTool
+        if tool is None or tool.name != "brushSelect":
+            self.artist.clearBrushPreview()
+            return
+
+        pos = (
+            self.artist.clampToCanvas(event.position()) if self._toolGestureActive else
+            self.artist.mouseToCanvas(event.position())
+        )
+        if pos is None:
+            self.artist.clearBrushPreview()
+            return
+
+        row, col = pos
+        self.artist.setBrushPreview(row, col, tool.selections.get("size", 1))
 
     def wheelEvent(self, event):
         factor = ZOOM_STEP if event.angleDelta().y() > 0 else 1 / ZOOM_STEP
