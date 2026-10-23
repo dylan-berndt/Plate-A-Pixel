@@ -203,14 +203,14 @@ def test_paint_brush_preview_uses_both_ink_and_paper_so_it_stays_visible_on_any_
 
 def test_paint_brush_preview_ink_and_paper_pixel_counts_are_roughly_equal(controller):
     # Not just "both colors appear" (see above) - genuinely close to a
-    # 50/50 split by pixel count. Regression coverage for two real,
-    # previously-shipped bugs that both looked fine by eye: Qt's default
-    # SquareCap extends every individual dash half a pen-width past its
-    # own two ends (eating into the gap on both sides), which measured
-    # as a ~2:1 ink:paper split on this exact shape before Qt.FlatCap
-    # was applied to the dashed pass - and is distinct from
-    # _maskOutlinePath's own corner-coverage fix, which didn't touch
-    # this ratio at all.
+    # 50/50 split by pixel count. Regression coverage for a real,
+    # previously-shipped bug that looked fine by eye: Qt's SquareCap
+    # extends every individual dash half a pen-width past its own two
+    # ends (eating into the gap on both sides), which measured as a
+    # ~2:1 ink:paper split on this exact shape - fixed by using
+    # Qt.FlatCap (no overshoot bias) for the dashed pass instead, with
+    # corner coverage handled separately by _paintCornerPatches (see its
+    # own tests below) rather than by cap-style overshoot.
     artist = CanvasArtist()
     artist.bindProject(controller)
     artist.resize(240, 240)
@@ -281,6 +281,127 @@ def test_brush_preview_cache_rebuilds_only_when_row_col_radius_changes(controlle
     painter.end()
     assert artist._brushPreviewCacheKey == (3, 3, 1)
     assert artist._brushPreviewPath is not firstPath
+
+
+# -- CanvasArtist._paintCornerPatches -----------------------------------------
+
+def test_path_subpath_vertices_reports_cumulative_length_around_a_closed_square():
+    mask = np.ones((2, 2), dtype=bool)
+    ys, xs = np.nonzero(mask)
+    path = CanvasArtist._maskOutlinePath(mask, ys, xs)
+
+    subpaths = CanvasArtist._pathSubpathVertices(path)
+    assert len(subpaths) == 1
+    vertices = subpaths[0]
+
+    # A 2x2 block's outline is a 2x2 square, perimeter 8, closed back to
+    # its own start - the first and last vertex share a point, but the
+    # last one's cumulative length should be the full perimeter, not 0.
+    assert vertices[0][1] == 0.0
+    assert vertices[-1][0] == vertices[0][0]
+    assert vertices[-1][1] == 8.0
+
+
+def test_paint_corner_patches_force_every_vertex_square_to_one_uniform_color(controller):
+    # The defect this exists to fix (reported directly, pixel-counted by
+    # the user, not eyeballed): a dash's on/off color transition landing
+    # right at a path corner used to leave that corner's pen-width-sized
+    # footprint half one color, half the other - a visibly split 2x2-ish
+    # block - because Qt.SquareCap's overshoot only ever extends a dash
+    # in its own direction of travel, so the incoming and outgoing dashes
+    # at a corner can each only cover part of it. This checks the actual
+    # guarantee _paintCornerPatches makes instead: every pixel strictly
+    # inside the exact square it paints at a vertex matches that one
+    # computed color, for every vertex, across a full animation cycle -
+    # not just "the overall ink:paper ratio looks right" (see the
+    # ink/paper ratio test above), which an aggregate count can satisfy
+    # while still hiding a localized split like this one.
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    artist.resize(240, 240)
+    canvas = controller.project.canvas
+    artist.setBrushPreview(3, 3, 3)
+
+    cell = artist._cellSize()
+    origin = artist._imageOrigin()
+    ink = QColor(artist._theme.ink).getRgb()[:3]
+    paper = QColor(artist._theme.paper).getRgb()[:3]
+
+    for offset in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0):
+        artist._marchOffset = offset
+        image = QImage(240, 240, QImage.Format_ARGB32)
+        painter = QPainter(image)
+        artist._paintBrushPreview(painter, canvas, cell, origin)
+        painter.end()
+        rgb = image.convertToFormat(QImage.Format_RGB888)
+
+        path = artist._brushPreviewPath
+        penWidth = artist._antsPenWidth(cell)
+        onLength = artist._BRUSH_DASH_PATTERN[0] * penWidth
+        period = sum(artist._BRUSH_DASH_PATTERN) * penWidth
+        offsetLength = offset * penWidth
+        half = penWidth / 2.0
+
+        for vertices in CanvasArtist._pathSubpathVertices(path):
+            seen = set()
+            for point, length in vertices:
+                # Mirrors _paintCornerPatches' own dedup: a closed loop's
+                # last vertex is the same point as its first (the seam),
+                # which can legitimately compute a different phase on its
+                # second, full-perimeter-length visit if the pattern's
+                # period doesn't evenly divide the loop's total length -
+                # only the first (moveTo) visit is the one actually
+                # painted, so that's the one this test has to check too.
+                key = (round(point.x(), 6), round(point.y(), 6))
+                if key in seen:
+                    continue
+                seen.add(key)
+                effective = (length + offsetLength) % period
+                expected = ink if effective < onLength else paper
+                leftLocal = point.x() + artist._brushPreviewLeft
+                topLocal = point.y() + artist._brushPreviewTop
+                x0 = int((leftLocal - half) * cell + origin.x()) + 1
+                y0 = int((topLocal - half) * cell + origin.y()) + 1
+                x1 = int((leftLocal + half) * cell + origin.x())
+                y1 = int((topLocal + half) * cell + origin.y())
+                for py in range(max(0, y0), min(240, y1)):
+                    for px in range(max(0, x0), min(240, x1)):
+                        assert rgb.pixelColor(px, py).getRgb()[:3] == expected
+
+
+def test_paint_brush_preview_has_no_sandwiched_background_gaps_at_a_corner(controller):
+    # A sentinel pixel strictly between two painted (ink or paper) pixels
+    # along a scan line is real evidence of a coverage hole - not just
+    # "near the edge of the painted silhouette", which a naive box check
+    # around a corner vertex would false-positive on for a thin stroke.
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    artist.resize(240, 240)
+    canvas = controller.project.canvas
+    artist.setBrushPreview(3, 3, 3)
+
+    cell = artist._cellSize()
+    origin = artist._imageOrigin()
+    sentinel = (255, 0, 255)
+
+    for offset in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0):
+        artist._marchOffset = offset
+        image = QImage(240, 240, QImage.Format_ARGB32)
+        image.fill(QColor(*sentinel))
+        painter = QPainter(image)
+        artist._paintBrushPreview(painter, canvas, cell, origin)
+        painter.end()
+        rgb = image.convertToFormat(QImage.Format_RGB888)
+
+        grid = [[rgb.pixelColor(x, y).getRgb()[:3] == sentinel for x in range(240)] for y in range(240)]
+        for y in range(240):
+            for x in range(1, 239):
+                if grid[y][x] and not grid[y][x - 1] and not grid[y][x + 1]:
+                    pytest.fail(f"sandwiched gap at ({x}, {y}), offset={offset}")
+        for x in range(240):
+            for y in range(1, 239):
+                if grid[y][x] and not grid[y - 1][x] and not grid[y + 1][x]:
+                    pytest.fail(f"sandwiched gap at ({x}, {y}), offset={offset}")
 
 
 # -- CanvasArtist marching-ants timer gating ----------------------------------

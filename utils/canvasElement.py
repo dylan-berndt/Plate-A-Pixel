@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtGui import QPainter, QImage, QColor, QPen, QPainterPath
@@ -32,13 +34,27 @@ class CanvasArtist(QWidget):
     _DASH_PATTERN = [3.0, 2.0]
 
     # BrushSelectTool's preview (see _paintBrushPreview) needs its own,
-    # equal-length pattern rather than reusing _DASH_PATTERN as-is: its
-    # dashed ink pass marches over a solid *paper* base, not transparency,
-    # so an uneven split (like 3:2 above) would show more black than
-    # white (or vice versa) instead of the equal amounts the dashes are
-    # there to guarantee. _DASH_PATTERN's own 3:2 bias is fine where it's
-    # used - the "off" half is just transparency there, not a second
-    # color competing for equal billing.
+    # perfectly equal pattern rather than reusing _DASH_PATTERN as-is -
+    # its dashed ink pass marches over a solid *paper* base, not
+    # transparency, so an uneven split (like _DASH_PATTERN's own 3:2)
+    # would show more black than white (or vice versa) instead of the
+    # equal amounts the dashes are there to guarantee. _DASH_PATTERN's
+    # bias is fine where it's used - the "off" half is just transparency
+    # there, not a second color competing for equal billing.
+    #
+    # Earlier versions of this pattern tried to compensate for Qt.
+    # SquareCap's half-pen-width-per-dash-end overshoot (see history),
+    # but overshoot is the wrong tool for corner coverage regardless of
+    # how it's tuned: it extends a dash only in its own direction of
+    # travel, so at a corner where the dash color changes exactly at the
+    # vertex, the incoming dash's overshoot and the outgoing dash's own
+    # width disagree about what color that corner is - a real, reported
+    # defect (a 2x2 grid-cell corner block rendering half one color, half
+    # the other), not just a cosmetic rough edge. Corner coverage is now
+    # handled explicitly and unambiguously instead - see
+    # _paintCornerPatches - so this pattern only has to get the plain,
+    # straight-run balance right, which an equal [3, 3] under Qt's
+    # non-overshooting Qt.FlatCap already does on its own.
     _BRUSH_DASH_PATTERN = [3.0, 3.0]
 
     def __init__(self, theme: Theme = None, **kwargs):
@@ -387,28 +403,22 @@ class CanvasArtist(QWidget):
         # inconsistently, and the black ants on top are the literal same
         # dashed-pen code the real selection uses.
         #
-        # This pass itself needs no explicit cap style any more - the
-        # path is now continuous closed loops (see _maskOutlinePath), so
-        # every real corner is a join, not a cap; Qt's SquareCap default
-        # only ever applies to the open ends of a rare unclosed pinch-
-        # point remnant, same as it always has for the real selection.
-        # The *dashed* pass below still needs Qt.FlatCap though, and for
-        # a different reason than corner coverage: cap style governs the
-        # two ends of every individual dash segment, not just a
-        # subpath's own absolute start/end - closeSubpath() never touched
-        # that. SquareCap extends each "on" dash half a pen-width past
-        # its own boundary on both sides, which eats into the "off" gap
-        # on either side of it - measured on a plain straight test line,
-        # SquareCap split ~2.03:1 in black's favor regardless of how many
-        # corners the path had, FlatCap ~1.02:1 every time.
+        # This pass itself needs no explicit cap style - it's a single
+        # continuous closed loop (see _maskOutlinePath), so every real
+        # corner is a join, not a cap.
+        penWidth = self._antsPenWidth(cell)
         solidPen = QPen(QColor(self._theme.paper))
-        solidPen.setWidthF(self._antsPenWidth(cell))
+        solidPen.setWidthF(penWidth)
         painter.setPen(solidPen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
 
         self._paintMarchingAnts(
             painter, path, cell, self._theme.ink, dashPattern=self._BRUSH_DASH_PATTERN, capStyle=Qt.FlatCap,
+        )
+        self._paintCornerPatches(
+            painter, path, penWidth, self._BRUSH_DASH_PATTERN, self._marchOffset,
+            self._theme.ink, self._theme.paper,
         )
         painter.restore()
 
@@ -429,16 +439,13 @@ class CanvasArtist(QWidget):
         dashed and animated via self._marchOffset - the one piece of
         drawing logic behind both the real selection's ants (the default
         _DASH_PATTERN, Qt's default cap style) and BrushSelectTool's
-        preview outline's dashed half (its own equal-length
-        _BRUSH_DASH_PATTERN and Qt.FlatCap - see _paintBrushPreview's own
-        note on why that one needs a non-default cap style and this one
-        doesn't: cap style governs every individual dash's own two ends,
-        and the real selection's "off" gaps are transparent, with
-        nothing there for a slightly-too-long "on" dash to visibly
-        encroach on). A different pattern's own period doesn't need to
-        match _DASH_PATTERN's - Qt wraps a dash offset by whatever
-        pattern it's actually painting with, regardless of what modulus
-        _advanceMarch happens to wrap _marchOffset itself by."""
+        preview outline's dashed half (its own equal _BRUSH_DASH_PATTERN
+        and Qt.FlatCap - see _paintCornerPatches for how that pass's
+        corners get covered without relying on cap-style overshoot). A
+        different pattern's own period doesn't need to match
+        _DASH_PATTERN's - Qt wraps a dash offset by whatever pattern it's
+        actually painting with, regardless of what modulus _advanceMarch
+        happens to wrap _marchOffset itself by."""
         pen = QPen(QColor(color))
         pen.setWidthF(self._antsPenWidth(cell))
         pen.setDashPattern(dashPattern if dashPattern is not None else self._DASH_PATTERN)
@@ -448,6 +455,84 @@ class CanvasArtist(QWidget):
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
+
+    @staticmethod
+    def _pathSubpathVertices(path):
+        """Every subpath of `path` as its own ordered list of (QPointF,
+        cumulativeLength) pairs - length 0 at that subpath's moveTo
+        point, accumulating straight-line distance through each
+        following lineTo in the exact order Qt itself walks the path
+        when advancing a dashed pen's phase. _paintCornerPatches uses
+        this to work out, independently of however the dash+cap
+        rendering actually turned out, what color the pen is
+        "supposed" to be passing through at each vertex."""
+        subpaths = []
+        current = None
+        prevPoint = None
+        cumulative = 0.0
+        for i in range(path.elementCount()):
+            element = path.elementAt(i)
+            point = QPointF(element.x, element.y)
+            if element.isMoveTo():
+                current = [(point, 0.0)]
+                subpaths.append(current)
+                cumulative = 0.0
+            else:
+                cumulative += math.hypot(point.x() - prevPoint.x(), point.y() - prevPoint.y())
+                current.append((point, cumulative))
+            prevPoint = point
+        return subpaths
+
+    @staticmethod
+    def _paintCornerPatches(painter: QPainter, path, penWidth, pattern, offset, inkColor, paperColor):
+        """Force-paints a penWidth x penWidth square of exactly one solid
+        color at every vertex of `path`, replacing whatever the dash+cap
+        rendering happened to leave there.
+
+        This exists because cap style alone can't correctly cover a
+        corner's full pen-width-square footprint when a dash's on/off
+        color happens to change right at that corner: Qt.SquareCap only
+        extends a dash past its own end in that dash's own direction of
+        travel, so the incoming dash (ending at the corner) and the
+        outgoing dash (starting there) can each only "reach" part of the
+        square, and if they're different colors - one literally ending
+        where the other begins - there's no single cap-style choice that
+        fills the square with one color instead of a visibly split one.
+        Reported directly: a 2x2 grid-cell corner block rendering half
+        black, half white instead of being entirely one or the other.
+
+        The fix sidesteps caps entirely. A dashed pen has exactly one
+        well-defined color at any single point along the path - whatever
+        the pattern says is active at that point's arc-length position,
+        with no "two different strokes disagreeing" possible since it's
+        one continuous stroke. So for each vertex, this independently
+        works out that one color (the same arc-length-mod-period math
+        Qt's own dash renderer uses - see tests/test_canvasElement.py for
+        the reproduction that pinned down the exact formula/units) and
+        paints the whole corner square as that color, overwriting
+        whatever partial coverage the dash+cap rendering produced there.
+        Only the rare frame where a dash transition lands exactly on a
+        vertex is still "ambiguous" in the sense that the corner flips
+        from one solid color to the other as the animation passes
+        through it - never a split result either way."""
+        onLength = pattern[0] * penWidth
+        period = sum(pattern) * penWidth
+        if period <= 0:
+            return
+        half = penWidth / 2.0
+        offsetLength = offset * penWidth
+        painter.setPen(Qt.NoPen)
+        for vertices in CanvasArtist._pathSubpathVertices(path):
+            seen = set()
+            for point, length in vertices:
+                key = (round(point.x(), 6), round(point.y(), 6))
+                if key in seen:
+                    continue
+                seen.add(key)
+                effective = (length + offsetLength) % period
+                color = inkColor if effective < onLength else paperColor
+                painter.setBrush(QColor(color))
+                painter.drawRect(QRectF(point.x() - half, point.y() - half, penWidth, penWidth))
 
     def _buildFillImage(self, mask, fillColor, alpha=0.38):
         """A translucent-fill RGBA QImage, one pixel per mask cell,
