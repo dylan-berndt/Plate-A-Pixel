@@ -31,15 +31,71 @@ def test_mask_outline_path_is_built_in_local_unscaled_grid_coordinates():
         assert element.y == int(element.y)
 
 
+def test_mask_outline_path_chains_an_l_shape_into_one_closed_loop_too():
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[0:3, 0] = True
+    mask[2, 0:3] = True
+    ys, xs = np.nonzero(mask)
+
+    path = CanvasArtist._maskOutlinePath(mask, ys, xs)
+
+    points = [(path.elementAt(i).x, path.elementAt(i).y) for i in range(path.elementCount())]
+    assert points[0] == points[-1]
+    # One single loop, not several disconnected subpaths - every corner
+    # of the L's 6-sided silhouette, visited once, then the closing
+    # return to the start.
+    assert len(set(points)) == 6
+    assert path.elementCount() == 7
+
+
+def test_mask_outline_path_does_not_raise_on_a_diagonal_only_pinch_point():
+    # Two cells touching only at one shared corner (what WandTool's
+    # `diagonal` option lets through - see GREEN_DIAGONAL_PAIR) put four
+    # boundary edges at that single point instead of the usual two -
+    # _maskOutlinePath's own docstring says this doesn't try to resolve
+    # which pair "really" belongs to which cell, just that it has to
+    # produce something gapless and not crash.
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[1, 1] = True
+    mask[2, 2] = True
+    ys, xs = np.nonzero(mask)
+
+    path = CanvasArtist._maskOutlinePath(mask, ys, xs)  # should not raise
+
+    # Every edge still gets traced - 6 merged runs here (the "waist"
+    # edges where the two cells meet merge into one each, horizontally
+    # and vertically, since _mergeRuns only looks at numeric adjacency
+    # on a shared grid line and can't tell the two cells apart - still a
+    # valid, fully-covering closed loop, just one that crosses itself at
+    # the pinch point rather than treating it as two separate squares).
+    assert path.elementCount() == 7
+    points = [(path.elementAt(i).x, path.elementAt(i).y) for i in range(path.elementCount())]
+    assert points[0] == points[-1]
+
+
 def test_mask_outline_path_skips_interior_edges_of_a_solid_block():
     mask = np.ones((3, 3), dtype=bool)
     ys, xs = np.nonzero(mask)
 
     path = CanvasArtist._maskOutlinePath(mask, ys, xs)
 
-    # A solid 3x3 block's silhouette is just its own perimeter - the
-    # four merged runs (top/bottom/left/right), 2 points each.
-    assert path.elementCount() == 8
+    # A solid 3x3 block's silhouette is just its own perimeter, chained
+    # into one closed loop (not four disconnected runs - see
+    # _maskOutlinePath's own note on why dashing needs it continuous):
+    # a moveTo, three corners, then closeSubpath's own implicit lineTo
+    # back to the start.
+    assert path.elementCount() == 5
+
+
+def test_mask_outline_path_chains_runs_into_one_closed_loop():
+    mask = np.ones((3, 3), dtype=bool)
+    ys, xs = np.nonzero(mask)
+
+    path = CanvasArtist._maskOutlinePath(mask, ys, xs)
+
+    points = [(path.elementAt(i).x, path.elementAt(i).y) for i in range(path.elementCount())]
+    assert points[0] == points[-1]  # closed back to its own start
+    assert len(set(points)) == 4  # exactly the block's 4 corners, each visited once
 
 
 # -- CanvasArtist selection overlay caching -----------------------------------
@@ -143,6 +199,45 @@ def test_paint_brush_preview_uses_both_ink_and_paper_so_it_stays_visible_on_any_
     pixels = {image.pixelColor(x, y).getRgb()[:3] for y in range(240) for x in range(240)}
     assert ink in pixels
     assert paper in pixels
+
+
+def test_paint_brush_preview_ink_and_paper_pixel_counts_are_roughly_equal(controller):
+    # Not just "both colors appear" (see above) - genuinely close to a
+    # 50/50 split by pixel count. Regression coverage for two real,
+    # previously-shipped bugs that both looked fine by eye: Qt's default
+    # SquareCap extends every individual dash half a pen-width past its
+    # own two ends (eating into the gap on both sides), which measured
+    # as a ~2:1 ink:paper split on this exact shape before Qt.FlatCap
+    # was applied to the dashed pass - and is distinct from
+    # _maskOutlinePath's own corner-coverage fix, which didn't touch
+    # this ratio at all.
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    artist.resize(240, 240)
+    canvas = controller.project.canvas
+    artist.setBrushPreview(3, 3, 3)
+
+    image = QImage(240, 240, QImage.Format_ARGB32)
+    image.fill(QColor(255, 0, 255))  # a sentinel distinct from both ants colors
+    painter = QPainter(image)
+    cell = artist._cellSize()
+    origin = artist._imageOrigin()
+    artist._paintBrushPreview(painter, canvas, cell, origin)
+    painter.end()
+
+    rgb = image.convertToFormat(QImage.Format_RGB888)
+    ink = QColor(artist._theme.ink).getRgb()[:3]
+    paper = QColor(artist._theme.paper).getRgb()[:3]
+    inkCount = paperCount = 0
+    for y in range(240):
+        for x in range(240):
+            c = rgb.pixelColor(x, y).getRgb()[:3]
+            if c == ink:
+                inkCount += 1
+            elif c == paper:
+                paperCount += 1
+    assert inkCount > 0 and paperCount > 0
+    assert 0.85 <= inkCount / paperCount <= 1.15
 
 
 def test_paint_brush_preview_is_a_no_op_without_a_preview_set(controller):

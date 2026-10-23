@@ -387,25 +387,22 @@ class CanvasArtist(QWidget):
         # inconsistently, and the black ants on top are the literal same
         # dashed-pen code the real selection uses.
         #
-        # SquareCap here, not FlatCap: the path is built from separate
-        # moveTo/lineTo runs per straight stretch (see _maskOutlinePath),
-        # not one continuous loop, so at every stair-step corner two
-        # *disconnected* subpaths meet at the same point rather than
-        # joining - cap style, not join style, decides what happens
-        # there. FlatCap ends each run exactly on its own mathematical
-        # endpoint with nothing extra, which left the corner pixel itself
-        # uncovered (confirmed by rendering one in isolation - a run
-        # ending exactly at (10, 10) and one starting there left (10, 10)
-        # background-colored, not white); SquareCap's extra half-pen-
-        # width past each endpoint is exactly enough for the two runs'
-        # extensions to meet and close that gap. The real selection's
-        # ants have always used SquareCap (never set explicitly, just
-        # Qt's default) for the same reason, drawing straight to
-        # transparency - this base pass needs the same closed coverage,
-        # just opaque instead of transparent.
+        # This pass itself needs no explicit cap style any more - the
+        # path is now continuous closed loops (see _maskOutlinePath), so
+        # every real corner is a join, not a cap; Qt's SquareCap default
+        # only ever applies to the open ends of a rare unclosed pinch-
+        # point remnant, same as it always has for the real selection.
+        # The *dashed* pass below still needs Qt.FlatCap though, and for
+        # a different reason than corner coverage: cap style governs the
+        # two ends of every individual dash segment, not just a
+        # subpath's own absolute start/end - closeSubpath() never touched
+        # that. SquareCap extends each "on" dash half a pen-width past
+        # its own boundary on both sides, which eats into the "off" gap
+        # on either side of it - measured on a plain straight test line,
+        # SquareCap split ~2.03:1 in black's favor regardless of how many
+        # corners the path had, FlatCap ~1.02:1 every time.
         solidPen = QPen(QColor(self._theme.paper))
         solidPen.setWidthF(self._antsPenWidth(cell))
-        solidPen.setCapStyle(Qt.SquareCap)
         painter.setPen(solidPen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
@@ -431,18 +428,17 @@ class CanvasArtist(QWidget):
         see _paintSelectionOverlay/_paintBrushPreview) with `color`,
         dashed and animated via self._marchOffset - the one piece of
         drawing logic behind both the real selection's ants (the default
-        _DASH_PATTERN, Qt's default SquareCap) and BrushSelectTool's
+        _DASH_PATTERN, Qt's default cap style) and BrushSelectTool's
         preview outline's dashed half (its own equal-length
         _BRUSH_DASH_PATTERN and Qt.FlatCap - see _paintBrushPreview's own
-        note on why it needs a different cap style; SquareCap is left as
-        the default here rather than changed for both, since nobody
-        asked for the selection's own ants to look any different and
-        SquareCap's extra bit of "on" coverage is invisible against the
-        transparency it's extending into there). A different pattern's
-        own period doesn't need to match _DASH_PATTERN's - Qt wraps a
-        dash offset by whatever pattern it's actually painting with,
-        regardless of what modulus _advanceMarch happens to wrap
-        _marchOffset itself by."""
+        note on why that one needs a non-default cap style and this one
+        doesn't: cap style governs every individual dash's own two ends,
+        and the real selection's "off" gaps are transparent, with
+        nothing there for a slightly-too-long "on" dash to visibly
+        encroach on). A different pattern's own period doesn't need to
+        match _DASH_PATTERN's - Qt wraps a dash offset by whatever
+        pattern it's actually painting with, regardless of what modulus
+        _advanceMarch happens to wrap _marchOffset itself by."""
         pen = QPen(QColor(color))
         pen.setWidthF(self._antsPenWidth(cell))
         pen.setDashPattern(dashPattern if dashPattern is not None else self._DASH_PATTERN)
@@ -488,16 +484,40 @@ class CanvasArtist(QWidget):
         paint methods above). `ys`/`xs` are mask's own np.nonzero(mask),
         passed in since every caller already has them.
 
-        Adjacent same-line edges are merged into one continuous run
-        before being added to the path (one moveTo/lineTo per run, not
-        per cell) so the dash pattern flows continuously along a whole
-        straight stretch instead of restarting at every single cell -
-        every restart shares the same animated phase, so a run shorter
-        than one dash+gap period would flip between fully drawn and fully
-        blank in lockstep with its neighbors as the phase animated,
-        which is what read as flickering once cells got small enough
-        (zoomed out) that a single edge no longer spanned a full dash
-        cycle."""
+        Adjacent same-line edges are first merged into single runs (one
+        straight span per run, not per cell), then runs sharing an
+        endpoint are chained into one continuous subpath per connected
+        loop of the boundary, closed back to its own start with
+        closeSubpath() - not left as one disconnected moveTo/lineTo pair
+        per run, which is what this used to do. That mattered for two
+        real, previously-shipped-and-reported bugs: a dashed pen draws
+        each subpath independently, restarting its dash phase at 0 and
+        capping (not joining) its two ends - every stair-step corner was
+        both a fresh dash-phase reset (an "on" segment ending one run and
+        a new one starting the next could land on unrelated phases,
+        making same-color runs across a corner look randomly too long or
+        too short) and a capped gap (Qt caps, unlike joins, can leave the
+        outside of a corner uncovered - no cap style tuning fixes that
+        for every corner, since which corners are convex versus concave
+        isn't fixed, it alternates around the loop). One continuous
+        subpath per loop fixes both at once: dashing flows through every
+        corner's actual join instead of resetting, and a join - any join
+        style - never leaves the gap a cap can.
+
+        Chaining can't always find one clean per-region loop: two cells
+        that only touch at a single pixel corner (a diagonal-only pinch,
+        like the Wand's own `diagonal` option lets through) have their
+        "waist" edges - each cell's edge closest to the other - fall on
+        the same grid line at numerically adjacent positions, so
+        _mergeRuns (which only sees numbers, not which cell an edge
+        belongs to) merges them into one straight run that happens to
+        pass *through* the pinch point rather than ending there. The
+        chained path still ends up as one single closed loop, it just
+        crosses itself at that point - visually a figure-eight/hourglass
+        through the two cells, rather than two separate squares. Still
+        fully gapless and still every edge drawn exactly once; just not
+        the same loop split a human tracing the two squares by eye would
+        draw."""
         rows, cols = mask.shape
         horizontal, vertical = {}, {}
         for y, x in zip(ys.tolist(), xs.tolist()):
@@ -510,15 +530,39 @@ class CanvasArtist(QWidget):
             if x == cols - 1 or not mask[y, x + 1]:
                 vertical.setdefault(x + 1, []).append(y)
 
-        path = QPainterPath()
+        edges = []
         for lineY, xPositions in horizontal.items():
             for start, end in CanvasArtist._mergeRuns(xPositions):
-                path.moveTo(start, lineY)
-                path.lineTo(end, lineY)
+                edges.append(((start, lineY), (end, lineY)))
         for lineX, yPositions in vertical.items():
             for start, end in CanvasArtist._mergeRuns(yPositions):
-                path.moveTo(lineX, start)
-                path.lineTo(lineX, end)
+                edges.append(((lineX, start), (lineX, end)))
+
+        adjacency = {}
+        for i, (a, b) in enumerate(edges):
+            adjacency.setdefault(a, []).append(i)
+            adjacency.setdefault(b, []).append(i)
+
+        used = [False] * len(edges)
+        path = QPainterPath()
+        for startIdx in range(len(edges)):
+            if used[startIdx]:
+                continue
+            start, b = edges[startIdx]
+            used[startIdx] = True
+            path.moveTo(*start)
+            path.lineTo(*b)
+            current = b
+            while current != start:
+                nextIdx = next((i for i in adjacency.get(current, ()) if not used[i]), None)
+                if nextIdx is None:
+                    break
+                used[nextIdx] = True
+                p1, p2 = edges[nextIdx]
+                current = p2 if p1 == current else p1
+                path.lineTo(*current)
+            if current == start:
+                path.closeSubpath()
         return path
 
     @staticmethod
