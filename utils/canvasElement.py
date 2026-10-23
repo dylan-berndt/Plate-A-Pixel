@@ -387,18 +387,25 @@ class CanvasArtist(QWidget):
         # inconsistently, and the black ants on top are the literal same
         # dashed-pen code the real selection uses.
         #
-        # FlatCap on both passes, not Qt's SquareCap default: SquareCap
-        # extends every dash half a pen-width past its own mathematical
-        # endpoint (so it can square off a line's visible tip) - for a
-        # *dashed* stroke that means every "on" segment silently eats
-        # into the "off" gap on both ends, which is invisible for the
-        # real selection's ants (the "off" half is just transparency
-        # there) but badly skewed black over white here, where the two
-        # are supposed to be equal (measured: ~68:32 with SquareCap on a
-        # 2px pen, ~52:48 with FlatCap, on an isolated test line).
+        # SquareCap here, not FlatCap: the path is built from separate
+        # moveTo/lineTo runs per straight stretch (see _maskOutlinePath),
+        # not one continuous loop, so at every stair-step corner two
+        # *disconnected* subpaths meet at the same point rather than
+        # joining - cap style, not join style, decides what happens
+        # there. FlatCap ends each run exactly on its own mathematical
+        # endpoint with nothing extra, which left the corner pixel itself
+        # uncovered (confirmed by rendering one in isolation - a run
+        # ending exactly at (10, 10) and one starting there left (10, 10)
+        # background-colored, not white); SquareCap's extra half-pen-
+        # width past each endpoint is exactly enough for the two runs'
+        # extensions to meet and close that gap. The real selection's
+        # ants have always used SquareCap (never set explicitly, just
+        # Qt's default) for the same reason, drawing straight to
+        # transparency - this base pass needs the same closed coverage,
+        # just opaque instead of transparent.
         solidPen = QPen(QColor(self._theme.paper))
         solidPen.setWidthF(self._antsPenWidth(cell))
-        solidPen.setCapStyle(Qt.FlatCap)
+        solidPen.setCapStyle(Qt.SquareCap)
         painter.setPen(solidPen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
