@@ -31,14 +31,6 @@ class CanvasArtist(QWidget):
     # looping smoothly).
     _DASH_PATTERN = [3.0, 2.0]
 
-    # BrushSelectTool's hover outline (see _paintBrushPreview) is drawn
-    # black-and-white, not a single ink color, so it stays visible over
-    # any canvas color including near-black pixels - equal on/off lengths
-    # so the two colors alternate evenly with no uncovered gap between
-    # them (unlike _DASH_PATTERN above, which leaves the "off" half
-    # transparent on purpose for the real, colored selection outline).
-    _BRUSH_DASH_PATTERN = [3.0, 3.0]
-
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         self._theme = theme or Theme()
@@ -83,10 +75,24 @@ class CanvasArtist(QWidget):
         # the canvas.
         self._brushPreview = None
 
+        # Outline path cached from the (row, col, radius) that built it -
+        # same reasoning as _selectionCacheRef above, now that the brush
+        # preview also redraws on every marching-ants timer tick (not
+        # just mouse movement): plain tuple equality is enough here (no
+        # GC-id-reuse concern like the selection array has - these are
+        # just ints), since the cache only needs to miss when the brush
+        # actually moves to a new cell or radius, not every animation
+        # frame.
+        self._brushPreviewCacheKey = None
+        self._brushPreviewPath = None
+        self._brushPreviewLeft = 0
+        self._brushPreviewTop = 0
+
     def _advanceMarch(self):
         if self._projectController is None:
             return
-        if not self._projectController.project.canvas.selection.any():
+        hasSelection = self._projectController.project.canvas.selection.any()
+        if not hasSelection and self._brushPreview is None:
             return
         self._marchOffset = (self._marchOffset + 1.0) % sum(self._DASH_PATTERN)
         self.update()
@@ -322,73 +328,87 @@ class CanvasArtist(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawImage(QRectF(0, 0, cols, rows), self._fillImage)
 
-        # Pen width (and, since Qt expresses dash lengths in pen-width
-        # units, the dashes with it) scales with the current zoom level:
-        # a fixed screen-pixel pen looks chunky relative to tiny
-        # zoomed-out cells and thin relative to huge zoomed-in ones. The
-        # path itself is in local (1-unit-per-cell) space under the
-        # scale(cell, cell) above, so the pen width has to be converted
-        # back to local units too, or it would scale by `cell` a second
-        # time on top of this already-cell-relative sizing.
-        penWidth = min(3.0, max(1.0, cell * 0.12)) / cell
-        pen = QPen(QColor(self._theme.glaze))
-        pen.setWidthF(penWidth)
-        pen.setDashPattern(self._DASH_PATTERN)
-        pen.setDashOffset(self._marchOffset)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        painter.drawPath(self._marchLocalPath)
+        self._paintMarchingAnts(painter, self._marchLocalPath, cell, self._theme.glaze)
         painter.restore()
 
     def _paintBrushPreview(self, painter: QPainter, canvas, cell, origin):
         """BrushSelectTool's hover outline (see setBrushPreview) - the
         exact cells a click would stamp, grid-aligned, not a circle
-        glyph. Recomputed straight from Canvas.brushOutlineMask on every
-        paint rather than cached like the selection above: it only
-        repaints in response to real mouse movement (not a forever-
-        running timer), and a radius-35 brush is at most a 71x71 mask -
-        cheap enough that caching it would just be complexity for no
-        measurable win.
+        glyph, marching exactly like the real selection's ants above
+        (same timer, same _marchOffset, same _paintMarchingAnts) rather
+        than a separate static technique: ink dashes over a solid paper
+        base instead of glaze dashes over a transparent one, so there
+        are two real colors involved instead of one dashed color plus
+        whatever's underneath - a solid dark outline alone disappeared
+        entirely over a canvas pixel that's already near-black.
 
-        Drawn in alternating black/white dashes (see _BRUSH_DASH_PATTERN)
-        rather than a single ink-colored line: a solid dark outline
-        disappeared entirely over a canvas pixel that's already near-
-        black. Two drawPath calls over the same (tiny) path, the second
-        offset by exactly one dash length so white fills in precisely
-        where black leaves off - static, not animated like the real
-        selection's marching ants, so there's no march offset here."""
+        The mask/path are cached by (row, col, radius) exactly like the
+        selection caches by its array - see _brushPreviewCacheKey - since
+        this now redraws on every animation tick (not just mouse
+        movement), there's no reason to retrace the boundary when the
+        brush hasn't actually moved since last frame."""
         if self._brushPreview is None:
             return
-        row, col, radius = self._brushPreview
-        mask, top, left = canvas.brushOutlineMask((row, col), radius)
-        ys, xs = np.nonzero(mask)
-        if ys.size == 0:
+
+        if self._brushPreview != self._brushPreviewCacheKey:
+            row, col, radius = self._brushPreview
+            mask, top, left = canvas.brushOutlineMask((row, col), radius)
+            ys, xs = np.nonzero(mask)
+            self._brushPreviewCacheKey = self._brushPreview
+            self._brushPreviewPath = self._maskOutlinePath(mask, ys, xs) if ys.size else None
+            self._brushPreviewLeft = left
+            self._brushPreviewTop = top
+
+        path = self._brushPreviewPath
+        if path is None:
             return
 
         painter.save()
         painter.translate(origin)
         painter.scale(cell, cell)
-        painter.translate(left, top)
+        painter.translate(self._brushPreviewLeft, self._brushPreviewTop)
 
-        path = self._maskOutlinePath(mask, ys, xs)
+        # Solid, undashed base first - not a second independently-dashed
+        # pass offset to interleave with the black one (what this used to
+        # do): two separately-dashed strokes could round to visibly
+        # different widths under the canvas's antialiasing-off rendering,
+        # since each dash's edges can land at a different sub-pixel
+        # position. A plain continuous stroke has no dash edges to round
+        # inconsistently, and the black ants on top are the literal same
+        # dashed-pen code the real selection uses.
+        solidPen = QPen(QColor(self._theme.paper))
+        solidPen.setWidthF(self._antsPenWidth(cell))
+        painter.setPen(solidPen)
         painter.setBrush(Qt.NoBrush)
-        penWidth = min(2.0, max(0.75, cell * 0.08)) / cell
-
-        blackPen = QPen(QColor(self._theme.ink))
-        blackPen.setWidthF(penWidth)
-        blackPen.setDashPattern(self._BRUSH_DASH_PATTERN)
-        blackPen.setDashOffset(0.0)
-        painter.setPen(blackPen)
         painter.drawPath(path)
 
-        whitePen = QPen(QColor(self._theme.paper))
-        whitePen.setWidthF(penWidth)
-        whitePen.setDashPattern(self._BRUSH_DASH_PATTERN)
-        whitePen.setDashOffset(self._BRUSH_DASH_PATTERN[0])
-        painter.setPen(whitePen)
-        painter.drawPath(path)
-
+        self._paintMarchingAnts(painter, path, cell, self._theme.ink)
         painter.restore()
+
+    def _antsPenWidth(self, cell):
+        """Local-space (not device-pixel) marching-ants pen width, shared
+        by the real selection outline and the brush preview's black half
+        (see _paintMarchingAnts/_paintBrushPreview) so both are sized
+        identically. Clamped in device-pixel terms - a fixed screen-pixel
+        pen looks chunky relative to tiny zoomed-out cells and thin
+        relative to huge zoomed-in ones - then divided back by `cell`
+        since the path it strokes is drawn under a scale(cell, cell)
+        transform, same as the path's own coordinates are."""
+        return min(3.0, max(1.0, cell * 0.12)) / cell
+
+    def _paintMarchingAnts(self, painter: QPainter, path, cell, color):
+        """Strokes `path` (already under the caller's translate/scale -
+        see _paintSelectionOverlay/_paintBrushPreview) with `color`,
+        dashed and animated via self._marchOffset/_DASH_PATTERN - the one
+        piece of drawing logic behind both the real selection's ants and
+        BrushSelectTool's preview outline's dashed half."""
+        pen = QPen(QColor(color))
+        pen.setWidthF(self._antsPenWidth(cell))
+        pen.setDashPattern(self._DASH_PATTERN)
+        pen.setDashOffset(self._marchOffset)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(path)
 
     def _buildFillImage(self, mask, fillColor, alpha=0.38):
         """A translucent-fill RGBA QImage, one pixel per mask cell,

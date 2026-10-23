@@ -121,9 +121,9 @@ def test_paint_brush_preview_matches_canvas_brush_outline_mask_without_raising(c
 
 def test_paint_brush_preview_uses_both_ink_and_paper_so_it_stays_visible_on_any_pixel(controller):
     # A single ink-colored line disappeared entirely over a near-black
-    # canvas pixel - the outline alternates ink/paper dashes instead (see
-    # _BRUSH_DASH_PATTERN), so at least one of the two always contrasts
-    # against whatever's underneath.
+    # canvas pixel - the dashed ink ants now march over a solid paper
+    # base (see _paintBrushPreview) instead, so at least one of the two
+    # always contrasts against whatever's underneath.
     artist = CanvasArtist()
     artist.bindProject(controller)
     artist.resize(240, 240)
@@ -155,6 +155,72 @@ def test_paint_brush_preview_is_a_no_op_without_a_preview_set(controller):
     painter = QPainter(image)
     artist._paintBrushPreview(painter, canvas, artist._cellSize(), artist._imageOrigin())  # should not raise
     painter.end()
+
+
+def test_brush_preview_cache_rebuilds_only_when_row_col_radius_changes(controller):
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    artist.resize(100, 100)
+    canvas = controller.project.canvas
+    cell, origin = artist._cellSize(), artist._imageOrigin()
+
+    artist.setBrushPreview(2, 2, 1)
+    image = QImage(100, 100, QImage.Format_ARGB32)
+    painter = QPainter(image)
+    artist._paintBrushPreview(painter, canvas, cell, origin)
+    painter.end()
+    firstPath = artist._brushPreviewPath
+    assert artist._brushPreviewCacheKey == (2, 2, 1)
+
+    # Same (row, col, radius) - a pure marching-ants tick, no actual
+    # movement - must not retrace the boundary.
+    painter = QPainter(image)
+    artist._paintBrushPreview(painter, canvas, cell, origin)
+    painter.end()
+    assert artist._brushPreviewPath is firstPath
+
+    # A real move to a different cell must rebuild it.
+    artist.setBrushPreview(3, 3, 1)
+    painter = QPainter(image)
+    artist._paintBrushPreview(painter, canvas, cell, origin)
+    painter.end()
+    assert artist._brushPreviewCacheKey == (3, 3, 1)
+    assert artist._brushPreviewPath is not firstPath
+
+
+# -- CanvasArtist marching-ants timer gating ----------------------------------
+
+def test_advance_march_is_a_no_op_with_neither_selection_nor_brush_preview(controller):
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    assert not controller.project.canvas.selection.any()
+    assert artist._brushPreview is None
+
+    artist._advanceMarch()
+
+    assert artist._marchOffset == 0.0
+
+
+def test_advance_march_animates_for_an_active_brush_preview_even_without_a_selection(controller):
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    assert not controller.project.canvas.selection.any()
+    artist.setBrushPreview(2, 2, 1)
+
+    artist._advanceMarch()
+
+    assert artist._marchOffset == 1.0
+
+
+def test_advance_march_still_animates_for_a_selection_without_a_brush_preview(controller):
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    controller.project.canvas.bucketSelect(RED_BLOCK[0], contiguous=True, mode="replace")
+    assert artist._brushPreview is None
+
+    artist._advanceMarch()
+
+    assert artist._marchOffset == 1.0
 
 
 # -- CanvasArea brush preview wiring ------------------------------------------
