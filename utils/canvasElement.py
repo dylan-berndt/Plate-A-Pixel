@@ -31,6 +31,16 @@ class CanvasArtist(QWidget):
     # looping smoothly).
     _DASH_PATTERN = [3.0, 2.0]
 
+    # BrushSelectTool's preview (see _paintBrushPreview) needs its own,
+    # equal-length pattern rather than reusing _DASH_PATTERN as-is: its
+    # dashed ink pass marches over a solid *paper* base, not transparency,
+    # so an uneven split (like 3:2 above) would show more black than
+    # white (or vice versa) instead of the equal amounts the dashes are
+    # there to guarantee. _DASH_PATTERN's own 3:2 bias is fine where it's
+    # used - the "off" half is just transparency there, not a second
+    # color competing for equal billing.
+    _BRUSH_DASH_PATTERN = [3.0, 3.0]
+
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
         self._theme = theme or Theme()
@@ -382,7 +392,7 @@ class CanvasArtist(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
 
-        self._paintMarchingAnts(painter, path, cell, self._theme.ink)
+        self._paintMarchingAnts(painter, path, cell, self._theme.ink, dashPattern=self._BRUSH_DASH_PATTERN)
         painter.restore()
 
     def _antsPenWidth(self, cell):
@@ -396,15 +406,20 @@ class CanvasArtist(QWidget):
         transform, same as the path's own coordinates are."""
         return min(3.0, max(1.0, cell * 0.12)) / cell
 
-    def _paintMarchingAnts(self, painter: QPainter, path, cell, color):
+    def _paintMarchingAnts(self, painter: QPainter, path, cell, color, dashPattern=None):
         """Strokes `path` (already under the caller's translate/scale -
         see _paintSelectionOverlay/_paintBrushPreview) with `color`,
-        dashed and animated via self._marchOffset/_DASH_PATTERN - the one
-        piece of drawing logic behind both the real selection's ants and
-        BrushSelectTool's preview outline's dashed half."""
+        dashed and animated via self._marchOffset - the one piece of
+        drawing logic behind both the real selection's ants (the default
+        _DASH_PATTERN) and BrushSelectTool's preview outline's dashed
+        half (its own equal-length _BRUSH_DASH_PATTERN - see its own
+        note on why). A different pattern's own period doesn't need to
+        match _DASH_PATTERN's - Qt wraps a dash offset by whatever
+        pattern it's actually painting with, regardless of what modulus
+        _advanceMarch happens to wrap _marchOffset itself by."""
         pen = QPen(QColor(color))
         pen.setWidthF(self._antsPenWidth(cell))
-        pen.setDashPattern(self._DASH_PATTERN)
+        pen.setDashPattern(dashPattern if dashPattern is not None else self._DASH_PATTERN)
         pen.setDashOffset(self._marchOffset)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
