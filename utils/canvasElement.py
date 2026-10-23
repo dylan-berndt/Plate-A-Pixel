@@ -386,13 +386,26 @@ class CanvasArtist(QWidget):
         # position. A plain continuous stroke has no dash edges to round
         # inconsistently, and the black ants on top are the literal same
         # dashed-pen code the real selection uses.
+        #
+        # FlatCap on both passes, not Qt's SquareCap default: SquareCap
+        # extends every dash half a pen-width past its own mathematical
+        # endpoint (so it can square off a line's visible tip) - for a
+        # *dashed* stroke that means every "on" segment silently eats
+        # into the "off" gap on both ends, which is invisible for the
+        # real selection's ants (the "off" half is just transparency
+        # there) but badly skewed black over white here, where the two
+        # are supposed to be equal (measured: ~68:32 with SquareCap on a
+        # 2px pen, ~52:48 with FlatCap, on an isolated test line).
         solidPen = QPen(QColor(self._theme.paper))
         solidPen.setWidthF(self._antsPenWidth(cell))
+        solidPen.setCapStyle(Qt.FlatCap)
         painter.setPen(solidPen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
 
-        self._paintMarchingAnts(painter, path, cell, self._theme.ink, dashPattern=self._BRUSH_DASH_PATTERN)
+        self._paintMarchingAnts(
+            painter, path, cell, self._theme.ink, dashPattern=self._BRUSH_DASH_PATTERN, capStyle=Qt.FlatCap,
+        )
         painter.restore()
 
     def _antsPenWidth(self, cell):
@@ -406,21 +419,29 @@ class CanvasArtist(QWidget):
         transform, same as the path's own coordinates are."""
         return min(3.0, max(1.0, cell * 0.12)) / cell
 
-    def _paintMarchingAnts(self, painter: QPainter, path, cell, color, dashPattern=None):
+    def _paintMarchingAnts(self, painter: QPainter, path, cell, color, dashPattern=None, capStyle=None):
         """Strokes `path` (already under the caller's translate/scale -
         see _paintSelectionOverlay/_paintBrushPreview) with `color`,
         dashed and animated via self._marchOffset - the one piece of
         drawing logic behind both the real selection's ants (the default
-        _DASH_PATTERN) and BrushSelectTool's preview outline's dashed
-        half (its own equal-length _BRUSH_DASH_PATTERN - see its own
-        note on why). A different pattern's own period doesn't need to
-        match _DASH_PATTERN's - Qt wraps a dash offset by whatever
-        pattern it's actually painting with, regardless of what modulus
-        _advanceMarch happens to wrap _marchOffset itself by."""
+        _DASH_PATTERN, Qt's default SquareCap) and BrushSelectTool's
+        preview outline's dashed half (its own equal-length
+        _BRUSH_DASH_PATTERN and Qt.FlatCap - see _paintBrushPreview's own
+        note on why it needs a different cap style; SquareCap is left as
+        the default here rather than changed for both, since nobody
+        asked for the selection's own ants to look any different and
+        SquareCap's extra bit of "on" coverage is invisible against the
+        transparency it's extending into there). A different pattern's
+        own period doesn't need to match _DASH_PATTERN's - Qt wraps a
+        dash offset by whatever pattern it's actually painting with,
+        regardless of what modulus _advanceMarch happens to wrap
+        _marchOffset itself by."""
         pen = QPen(QColor(color))
         pen.setWidthF(self._antsPenWidth(cell))
         pen.setDashPattern(dashPattern if dashPattern is not None else self._DASH_PATTERN)
         pen.setDashOffset(self._marchOffset)
+        if capStyle is not None:
+            pen.setCapStyle(capStyle)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
