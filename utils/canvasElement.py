@@ -31,6 +31,15 @@ class CanvasArtist(QWidget):
     # offset at exactly the right value (wrapping at the wrong value made
     # the animation visibly jump/"bounce" once per cycle instead of
     # looping smoothly).
+    #
+    # _advanceMarch's own wrap point has to be a common multiple of
+    # *every* pattern _marchOffset ever drives - see _MARCH_WRAP below -
+    # not just this one; wrapping at this pattern's own period alone
+    # once caused a periodic stutter in the brush preview's animation
+    # (reported directly: "jumpiness every 0.2-0.5 seconds"), since 5
+    # isn't a multiple of _BRUSH_DASH_PATTERN's own period of 6 - every
+    # 5 ticks the brush's phase jumped backward by 5 instead of
+    # continuing by 1.
     _DASH_PATTERN = [3.0, 2.0]
 
     # BrushSelectTool's preview (see _paintBrushPreview) needs its own,
@@ -56,6 +65,14 @@ class CanvasArtist(QWidget):
     # straight-run balance right, which an equal [3, 3] under Qt's
     # non-overshooting Qt.FlatCap already does on its own.
     _BRUSH_DASH_PATTERN = [3.0, 3.0]
+
+    # The one wrap point _advanceMarch may use for _marchOffset: a
+    # common multiple of both _DASH_PATTERN's period (5) and
+    # _BRUSH_DASH_PATTERN's period (6), so wrapping never lands at a
+    # point that's mid-cycle for either pattern - see _DASH_PATTERN's
+    # own note on the stutter that wrapping at just one pattern's period
+    # caused the other.
+    _MARCH_WRAP = float(math.lcm(int(sum(_DASH_PATTERN)), int(sum(_BRUSH_DASH_PATTERN))))
 
     def __init__(self, theme: Theme = None, **kwargs):
         super().__init__(**kwargs)
@@ -120,7 +137,7 @@ class CanvasArtist(QWidget):
         hasSelection = self._projectController.project.canvas.selection.any()
         if not hasSelection and self._brushPreview is None:
             return
-        self._marchOffset = (self._marchOffset + 1.0) % sum(self._DASH_PATTERN)
+        self._marchOffset = (self._marchOffset + 1.0) % self._MARCH_WRAP
         self.update()
 
     def bindProject(self, projectController):
@@ -443,9 +460,14 @@ class CanvasArtist(QWidget):
         and Qt.FlatCap - see _paintCornerPatches for how that pass's
         corners get covered without relying on cap-style overshoot). A
         different pattern's own period doesn't need to match
-        _DASH_PATTERN's - Qt wraps a dash offset by whatever pattern it's
-        actually painting with, regardless of what modulus _advanceMarch
-        happens to wrap _marchOffset itself by."""
+        _DASH_PATTERN's for the dash itself to render correctly - Qt
+        applies whatever pattern it's actually painting with to
+        `self._marchOffset` independently each call - but _advanceMarch
+        still has to wrap that raw offset at a value that's a multiple
+        of *every* pattern in play (_MARCH_WRAP), or the animation
+        stutters once per wrap for whichever pattern's period doesn't
+        divide evenly into the wrap point - see _DASH_PATTERN's own
+        note on the reported bug that taught this."""
         pen = QPen(QColor(color))
         pen.setWidthF(self._antsPenWidth(cell))
         pen.setDashPattern(dashPattern if dashPattern is not None else self._DASH_PATTERN)

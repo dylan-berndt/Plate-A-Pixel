@@ -439,6 +439,53 @@ def test_advance_march_still_animates_for_a_selection_without_a_brush_preview(co
     assert artist._marchOffset == 1.0
 
 
+def test_march_wrap_is_a_common_multiple_of_both_dash_patterns():
+    # Reported directly: the brush preview's animation visibly stuttered
+    # every 0.2-0.5 seconds. Root cause - _advanceMarch used to wrap
+    # _marchOffset at sum(_DASH_PATTERN) == 5 alone, but
+    # _BRUSH_DASH_PATTERN's own period is 6; 5 isn't a multiple of 6, so
+    # every 5 ticks (400ms at the real 80ms timer interval - squarely in
+    # the reported range) the brush's phase jumped backward by 5 instead
+    # of advancing by 1. _MARCH_WRAP has to divide evenly by *every*
+    # pattern _marchOffset drives, not just the one it happened to be
+    # computed from.
+    assert CanvasArtist._MARCH_WRAP % sum(CanvasArtist._DASH_PATTERN) == 0
+    assert CanvasArtist._MARCH_WRAP % sum(CanvasArtist._BRUSH_DASH_PATTERN) == 0
+
+
+def test_advance_march_wrapping_renders_the_same_brush_preview_as_the_unwrapped_offset(controller):
+    # The real regression test for the stutter: step _advanceMarch far
+    # enough to wrap around at least once, and confirm the brush preview
+    # it paints is pixel-identical to painting with the true, never-
+    # wrapped offset - i.e. wrapping is inaudible to the rendering, not
+    # just "a multiple of both periods" in the abstract (see the test
+    # above - that alone doesn't rule out, say, a sign error).
+    artist = CanvasArtist()
+    artist.bindProject(controller)
+    artist.resize(240, 240)
+    canvas = controller.project.canvas
+    artist.setBrushPreview(3, 3, 3)
+    cell, origin = artist._cellSize(), artist._imageOrigin()
+
+    def renderAt(offset):
+        artist._marchOffset = offset
+        image = QImage(240, 240, QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        artist._paintBrushPreview(painter, canvas, cell, origin)
+        painter.end()
+        return image.convertToFormat(QImage.Format_RGB888)
+
+    wrap = int(artist._MARCH_WRAP)
+    for trueTick in range(wrap, wrap + 10):  # spans one full wrap-around
+        wrapped = float(trueTick % wrap)
+        a = renderAt(wrapped)
+        b = renderAt(float(trueTick))
+        for y in range(240):
+            for x in range(240):
+                assert a.pixelColor(x, y) == b.pixelColor(x, y), (trueTick, x, y)
+
+
 # -- CanvasArea brush preview wiring ------------------------------------------
 
 @pytest.fixture
